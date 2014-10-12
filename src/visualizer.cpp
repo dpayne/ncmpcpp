@@ -47,6 +47,9 @@ namespace {
 
 const int fps = 25;
 
+const Color colorMap [] = { clWhite, clCyan, clBlue, clGreen, clYellow, clMagenta, clRed };
+const char asciiGreyScaleMap [] = { '@', '%', '#', '*', '+', '=', '-' };
+
 }
 
 Visualizer::Visualizer()
@@ -92,13 +95,13 @@ void Visualizer::update()
 {
 	if (m_fifo < 0)
 		return;
-	
+
 	// PCM in format 44100:16:1 (for mono visualization) and 44100:16:2 (for stereo visualization) is supported
 	int16_t buf[m_samples];
 	ssize_t data = read(m_fifo, buf, sizeof(buf));
 	if (data < 0) // no data available in fifo
 		return;
-	
+
 	if (m_output_id != -1 && Global::Timer - m_timer > Config.visualizer_sync_interval)
 	{
 		Mpd.DisableOutput(m_output_id);
@@ -106,14 +109,42 @@ void Visualizer::update()
 		Mpd.EnableOutput(m_output_id);
 		m_timer = Global::Timer;
 	}
-	
+
 	void (Visualizer::*draw)(int16_t *, ssize_t, size_t, size_t);
-#	ifdef HAVE_FFTW3_H
-	if (!Config.visualizer_use_wave)
+#	ifndef HAVE_FFTW3_H
+	draw = &Visualizer::DrawSoundWave;
+#	else
+	if ( Config.visualizer_function == 1 )
+	{
+		draw = &Visualizer::DrawSoundWaveFillAscii;
+		color = false;
+	}
+	else if ( Config.visualizer_function == 2 )
+	{
+		draw = &Visualizer::DrawSoundWaveFill;
+		color = true;
+	}
+	else if ( Config.visualizer_function == 3 )
+	{
+		draw = &Visualizer::DrawSoundWaveFillAscii;
+		color = true;
+	}
+	else if ( Config.visualizer_function == 4 )
+	{
 		draw = &Visualizer::DrawFrequencySpectrum;
+		color = false;
+	}
+	else if ( Config.visualizer_function == 5 )
+	{
+		draw = &Visualizer::DrawFrequencySpectrum;
+		color = true;
+	}
 	else
-#	endif // HAVE_FFTW3_H
+	{
 		draw = &Visualizer::DrawSoundWave;
+		color = false;
+	}
+#	endif // HAVE_FFTW3_H
 
 	const ssize_t samples_read = data/sizeof(int16_t);
 	std::for_each(buf, buf+samples_read, [](int16_t &sample) {
@@ -162,12 +193,24 @@ void Visualizer::spacePressed()
 #	endif // HAVE_FFTW3_H
 }
 
-void Visualizer::DrawSoundWave(int16_t *buf, ssize_t samples, size_t y_offset, size_t height)
+Color Visualizer::toColor( int number, int max )
 {
-	const int samples_per_col = samples/w.getWidth();
+	const int normalizedNumber = ( ( number * 7 ) / max ) % 7;
+	return colorMap[ normalizedNumber ];
+}
+
+char Visualizer::toAsciiGrey( int number, int max )
+{
+	const int normalizedNumber = ( ( number * 7 ) / max ) % 7;
+	return asciiGreyScaleMap[ normalizedNumber ];
+}
+
+void Visualizer::DrawSoundWave(int16_t *buf, ssize_t samples, size_t y_offset, size_t height, bool color)
+{
+	const int samples_per_col = samples/w->GetWidth();
 	const int half_height = height/2;
 	double prev_point_pos = 0;
-	const size_t win_width = w.getWidth();
+	const size_t win_width = w->GetWidth();
 	for (size_t i = 0; i < win_width; ++i)
 	{
 		double point_pos = 0;
@@ -176,56 +219,153 @@ void Visualizer::DrawSoundWave(int16_t *buf, ssize_t samples, size_t y_offset, s
 		point_pos /= samples_per_col;
 		point_pos /= std::numeric_limits<int16_t>::max();
 		point_pos *= half_height;
-		w << NC::XY(i, y_offset+half_height+point_pos) << Config.visualizer_chars[0];
+		*w << NC::XY(i, y_offset+half_height+point_pos) << Config.visualizer_chars[0];
 		if (i && abs(prev_point_pos-point_pos) > 2)
 		{
 			// if gap is too big. intermediate values are needed
 			// since without them all we see are blinking points
 			const int breakpoint = std::max(prev_point_pos, point_pos);
 			const int half = (prev_point_pos+point_pos)/2;
+			*w << clDefault;
 			for (int k = std::min(prev_point_pos, point_pos)+1; k < breakpoint; k += 2)
-				w << NC::XY(i-(k < half), y_offset+half_height+k) << Config.visualizer_chars[0];
+				*w << NC::XY(i-(k < half), y_offset+half_height+k) << Config.visualizer_chars[0];
+		}
+		prev_point_pos = point_pos;
+	}
+}
+
+void Visualizer::DrawSoundWaveFill(int16_t *buf, ssize_t samples, size_t y_offset, size_t height, bool color)
+{
+	const int samples_per_col = samples/w->GetWidth();
+	const int half_height = height/2;
+	double prev_point_pos = 0;
+	const size_t win_width = w->GetWidth();
+	const bool left = y_offset > 0;
+	int x = 0;
+	for (size_t i = 0; i < win_width; ++i)
+	{
+		double point_pos = 0;
+		for (int j = 0; j < samples_per_col; ++j)
+			point_pos += buf[i*samples_per_col+j];
+		point_pos /= samples_per_col;
+		point_pos /= std::numeric_limits<int16_t>::max();
+		point_pos *= half_height;
+		for (int k = 0; k < point_pos * 2; k += 2)
+		{
+			x = height;
+			if ( left )
+			{
+				x += k;
+			}
+			else
+			{
+				x -= k;
+			}
+
+			if ( x > 0 && x < w->GetHeight() && (i-(k < half_height + point_pos)) > 0 && (i-(k < half_height + point_pos)) < w->GetWidth() )
+			{
+				if ( color )
+				{
+					*w << toColor( k, height );
+				}
+				else
+				{
+					*w << clDefault;
+				}
+				*w << NC::XY(i-(k < half_height + point_pos), x) << Config.visualizer_chars[0];
+			}
+		}
+		prev_point_pos = point_pos;
+	}
+}
+
+void Visualizer::DrawSoundWaveFillAscii(int16_t *buf, ssize_t samples, size_t y_offset, size_t height, bool color)
+{
+	const int samples_per_col = samples/w->GetWidth();
+	const int half_height = height/2;
+	double prev_point_pos = 0;
+	const size_t win_width = w->GetWidth();
+	const bool left = y_offset > 0;
+	int x = 0;
+	for (size_t i = 0; i < win_width; ++i)
+	{
+		double point_pos = 0;
+		for (int j = 0; j < samples_per_col; ++j)
+			point_pos += buf[i*samples_per_col+j];
+		point_pos /= samples_per_col;
+		point_pos /= std::numeric_limits<int16_t>::max();
+		point_pos *= half_height;
+		for (int k = 0; k < point_pos * 2; k += 2)
+		{
+			x = height;
+			if ( left )
+			{
+				x += k;
+			}
+			else
+			{
+				x -= k;
+			}
+
+			if ( x > 0 && x < w->GetHeight() && (i-(k < half_height + point_pos)) > 0 && (i-(k < half_height + point_pos)) < w->GetWidth() )
+			{
+				if ( color )
+				{
+					*w << toColor( k, height );
+				}
+				else
+				{
+					*w << clDefault;
+				}
+				*w << NC::XY(i-(k < half_height + point_pos), x) << toAsciiGrey( k, height );
+			}
 		}
 		prev_point_pos = point_pos;
 	}
 }
 
 #ifdef HAVE_FFTW3_H
-void Visualizer::DrawFrequencySpectrum(int16_t *buf, ssize_t samples, size_t y_offset, size_t height)
+void Visualizer::DrawFrequencySpectrum(int16_t *buf, ssize_t samples, size_t y_offset, size_t height, bool color)
 {
-	for (unsigned i = 0, j = 0; i < m_samples; ++i)
+	for (unsigned i = 0, j = 0; i < itsSamples; ++i)
 	{
 		if (j < samples)
-			m_fftw_input[i] = buf[j++];
+			itsInput[i] = buf[j++];
 		else
-			m_fftw_input[i] = 0;
+			itsInput[i] = 0;
 	}
-	
-	fftw_execute(m_fftw_plan);
-	
+
+	fftw_execute(itsPlan);
+
 	// count magnitude of each frequency and scale it to fit the screen
-	for (unsigned i = 0; i < m_fftw_results; ++i)
-		m_freq_magnitudes[i] = sqrt(m_fftw_output[i][0]*m_fftw_output[i][0] + m_fftw_output[i][1]*m_fftw_output[i][1])/2e4*height;
-	
-	const size_t win_width = w.getWidth();
-	// cut bandwidth a little to achieve better look
-	const int freqs_per_col = m_fftw_results/win_width * 7/10;
-	double bar_height;
-	size_t bar_real_height;
-	for (size_t i = 0; i < win_width; ++i)
+	for (unsigned i = 0; i < itsFFTResults; ++i)
+		itsFreqsMagnitude[i] = sqrt(itsOutput[i][0]*itsOutput[i][0] + itsOutput[i][1]*itsOutput[i][1])/1e5*height/5;
+
+	const size_t win_width = w->GetWidth();
+	const int freqs_per_col = (itsFFTResults/win_width) /* cut bandwidth a little to achieve better look */ * 7/10;
+	for (size_t i = 0; i < win_width; i += 1)
 	{
-		bar_height = 0;
+		size_t bar_height = 0;
 		for (int j = 0; j < freqs_per_col; ++j)
-			bar_height += m_freq_magnitudes[i*freqs_per_col+j];
-		// buff higher frequencies
-		bar_height *= log2(2 + i);
-		// moderately normalize the heights
-		bar_height = pow(bar_height, 0.5);
-		bar_real_height = std::min(size_t(bar_height/freqs_per_col), height);
-		const size_t start_y = y_offset > 0 ? y_offset : height-bar_real_height;
-		const size_t stop_y = std::min(bar_real_height+start_y, w.getHeight());
-		for (size_t j = start_y; j < stop_y; ++j)
-			w << NC::XY(i, j) << Config.visualizer_chars[1];
+			bar_height += itsFreqsMagnitude[i*freqs_per_col+j];
+
+		bar_height = std::min(bar_height/freqs_per_col, height);
+		const size_t start_y = y_offset > 0 ? y_offset : height-bar_height;
+		const size_t stop_y = std::min(bar_height+start_y, w->GetHeight());
+		const Color colorHeight = toColor( i, win_width );
+
+		for (size_t j = start_y; j < stop_y; j += 1)
+		{
+			if ( color )
+			{
+				*w << colorHeight;
+			}
+			else
+			{
+				*w << clDefault;
+			}
+			*w << NC::XY(i, j) << Config.visualizer_chars[1];
+		}
 	}
 }
 #endif // HAVE_FFTW3_H
@@ -261,3 +401,4 @@ void Visualizer::FindOutputID()
 
 #endif // ENABLE_VISUALIZER
 
+/* vim: set tabstop=4 softtabstop=4 shiftwidth=4 noexpandtab : */

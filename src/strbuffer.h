@@ -25,7 +25,7 @@
 #include <set>
 #include "window.h"
 
-namespace NC {//
+namespace NC {
 
 /// Buffer template class that stores text
 /// along with its properties (colors/formatting).
@@ -36,7 +36,7 @@ template <typename CharT> class BasicBuffer
 		enum class Type { Color, Format };
 		
 		Property(size_t position_, NC::Color color_, int id_)
-		: m_type(Type::Color), m_position(position_), m_color(color_), m_id(id_) { }
+		: m_type(Type::Color), m_position(position_), m_color(std::move(color_)), m_id(id_) { }
 		Property(size_t position_, NC::Format format_, int id_)
 		: m_type(Type::Format), m_position(position_), m_format(format_), m_id(id_) { }
 		
@@ -90,25 +90,19 @@ public:
 	typedef std::basic_string<CharT> StringType;
 	typedef std::set<Property> Properties;
 	
-	template <typename... Args>
-	BasicBuffer(Args... args)
-	{
-		construct(std::forward<Args>(args)...);
-	}
-
 	const StringType &str() const { return m_string; }
 	const Properties &properties() const { return m_properties; }
 	
 	template <typename PropertyT>
-	void setProperty(size_t position, PropertyT property, size_t id = -1)
+	void setProperty(size_t position, PropertyT &&property, size_t id = -1)
 	{
-		m_properties.insert(Property(position, property, id));
+		m_properties.insert(Property(position, std::forward<PropertyT>(property), id));
 	}
 	
 	template <typename PropertyT>
-	bool removeProperty(size_t position, PropertyT property, size_t id = -1)
+	bool removeProperty(size_t position, PropertyT &&property, size_t id = -1)
 	{
-		auto it = m_properties.find(Property(position, property, id));
+		auto it = m_properties.find(Property(position, std::forward<PropertyT>(property), id));
 		bool found = it != m_properties.end();
 		if (found)
 			m_properties.erase(it);
@@ -187,10 +181,20 @@ public:
 		return *this;
 	}
 	
+	// static variadic initializer. used instead of a proper constructor because
+	// it's too polymorphic and would end up invoked as a copy/move constructor.
+	template <typename... Args>
+	static BasicBuffer init(Args&&... args)
+	{
+		BasicBuffer result;
+		result.construct(std::forward<Args>(args)...);
+		return result;
+	}
+
 private:
 	void construct() { }
 	template <typename ArgT, typename... Args>
-	void construct(ArgT &&arg, Args... args)
+	void construct(ArgT &&arg, Args&&... args)
 	{
 		*this << std::forward<ArgT>(arg);
 		construct(std::forward<Args>(args)...);

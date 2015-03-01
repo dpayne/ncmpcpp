@@ -79,7 +79,7 @@ int m_volume;
 void drawTitle(const MPD::Song &np)
 {
 	assert(!np.empty());
-	windowTitle(np.toString(Config.song_window_title_format, Config.tags_separator));
+	windowTitle(Format::stringify<char>(Config.song_window_title_format, &np));
 }
 
 std::string playerStateToString(MPD::PlayerState ps)
@@ -88,25 +88,46 @@ std::string playerStateToString(MPD::PlayerState ps)
 	switch (ps)
 	{
 		case MPD::psUnknown:
-			result = "[unknown]";
+			switch (Config.design)
+			{
+				case Design::Alternative:
+					result = "[unknown]";
+					break;
+				case Design::Classic:
+					break;
+			}
 			break;
 		case MPD::psPlay:
-			if (Config.design == Design::Alternative)
-				result = "[playing]";
-			else
-				result = "Playing: ";
+			switch (Config.design)
+			{
+				case Design::Alternative:
+					result = "[playing]";
+					break;
+				case Design::Classic:
+					result = "Playing:";
+					break;
+			}
 			break;
 		case MPD::psPause:
-			if (Config.design == Design::Alternative)
-				result = "[paused] ";
-			else
-				result = "[Paused] ";
+			switch (Config.design)
+			{
+				case Design::Alternative:
+					result = "[paused]";
+					break;
+				case Design::Classic:
+					result = "Paused:";
+					break;
+			}
 			break;
 		case MPD::psStop:
-			if (Config.design == Design::Alternative)
-				result = "[stopped]";
-			break;
-		default:
+			switch (Config.design)
+			{
+				case Design::Alternative:
+					result = "[stopped]";
+					break;
+				case Design::Classic:
+					break;
+			}
 			break;
 	}
 	return result;
@@ -121,7 +142,11 @@ void initialize_status()
 	{
 		int curr_pos = Status::State::currentSongPosition();
 		if  (curr_pos >= 0)
+		{
 			myPlaylist->main().highlight(curr_pos);
+			if (isVisible(myPlaylist))
+				myPlaylist->refresh();
+		}
 	}
 
 	// Set TCP_NODELAY on the tcp socket as we are using write-write-read pattern
@@ -130,19 +155,13 @@ void initialize_status()
 	int flag = 1;
 	setsockopt(Mpd.GetFD(), IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
-	// go to startup screen
-	if (Config.startup_screen_type != myScreen->type())
-		toScreen(Config.startup_screen_type)->switchTo();
-	myScreen->refresh();
-
 	myBrowser->fetchSupportedExtensions();
 #	ifdef ENABLE_OUTPUTS
 	myOutputs->FetchList();
 #	endif // ENABLE_OUTPUTS
 #	ifdef ENABLE_VISUALIZER
 	myVisualizer->ResetFD();
-	if (myScreen == myVisualizer)
-		myVisualizer->SetFD();
+	myVisualizer->SetFD();
 	myVisualizer->FindOutputID();
 #	endif // ENABLE_VISUALIZER
 
@@ -167,21 +186,15 @@ void Status::handleServerError(MPD::ServerError &e)
 	Statusbar::printf("MPD: %1%", e.what());
 	if (e.code() == MPD_SERVER_ERROR_PERMISSION)
 	{
-		wFooter->setGetStringHelper(nullptr);
+		NC::Window::ScopedPromptHook helper(*wFooter, nullptr);
 		Statusbar::put() << "Password: ";
-		Mpd.SetPassword(wFooter->getString(0, true));
+		Mpd.SetPassword(wFooter->prompt("", -1, true));
 		try {
 			Mpd.SendPassword();
 			Statusbar::print("Password accepted");
 		} catch (MPD::ServerError &e_prim) {
 			handleServerError(e_prim);
 		}
-		wFooter->setGetStringHelper(Statusbar::Helpers::getString);
-	}
-	else if (e.code() == MPD_SERVER_ERROR_NO_EXIST && myScreen == myBrowser)
-	{
-		myBrowser->GetDirectory(getParentDirectory(myBrowser->CurrentDir()));
-		myBrowser->refresh();
 	}
 }
 
@@ -246,7 +259,7 @@ void Status::update(int event)
 		Changes::playerState();
 		if (m_current_song_id != st.currentSongID())
 		{
-			Changes::songID();
+			Changes::songID(st.currentSongID());
 			m_current_song_id = st.currentSongID();
 		}
 	}
@@ -288,7 +301,7 @@ void Status::update(int event)
 				if (m_status_initialized)
 					Statusbar::printf("Consume mode is %1%", !m_consume ? "off" : "on");
 			}
-			if (('x' == m_crossfade) != st.crossfade())
+			if (('x' == m_crossfade) != (st.crossfade() != 0))
 			{
 				int crossfade = st.crossfade();
 				m_crossfade = crossfade ? 'x' : 0;
@@ -388,31 +401,30 @@ int Status::State::volume()
 
 void Status::Changes::playlist(unsigned previous_version)
 {
-	myPlaylist->main().clearSearchResults();
-	withUnfilteredMenuReapplyFilter(myPlaylist->main(), [previous_version]() {
-		if (m_playlist_length < myPlaylist->main().size())
+	if (m_playlist_length < myPlaylist->main().size())
+	{
+		auto it = myPlaylist->main().begin()+m_playlist_length;
+		auto end = myPlaylist->main().end();
+		for (; it != end; ++it)
+			myPlaylist->unregisterSong(it->value());
+		myPlaylist->main().resizeList(m_playlist_length);
+	}
+
+	MPD::SongIterator s = Mpd.GetPlaylistChanges(previous_version), end;
+	for (; s != end; ++s)
+	{
+		size_t pos = s->getPosition();
+		myPlaylist->registerSong(*s);
+		if (pos < myPlaylist->main().size())
 		{
-			auto it = myPlaylist->main().begin()+m_playlist_length;
-			auto end = myPlaylist->main().end();
-			for (; it != end; ++it)
-				myPlaylist->unregisterSong(it->value());
-			myPlaylist->main().resizeList(m_playlist_length);
+			// if song's already in playlist, replace it with a new one
+			MPD::Song &old_s = myPlaylist->main()[pos].value();
+			myPlaylist->unregisterSong(old_s);
+			old_s = std::move(*s);
 		}
-		
-		Mpd.GetPlaylistChanges(previous_version, [](MPD::Song s) {
-			size_t pos = s.getPosition();
-			if (pos < myPlaylist->main().size())
-			{
-				// if song's already in playlist, replace it with a new one
-				MPD::Song &old_s = myPlaylist->main()[pos].value();
-				myPlaylist->unregisterSong(old_s);
-				old_s = s;
-			}
-			else // otherwise just add it to playlist
-				myPlaylist->main().addItem(s);
-			myPlaylist->registerSong(s);
-		});
-	});
+		else // otherwise just add it to playlist
+			myPlaylist->main().addItem(std::move(*s));
+	}
 	
 	myPlaylist->reloadTotalLength();
 	myPlaylist->reloadRemaining();
@@ -437,9 +449,9 @@ void Status::Changes::storedPlaylists()
 {
 	myPlaylistEditor->requestPlaylistsUpdate();
 	myPlaylistEditor->requestContentsUpdate();
-	if (myBrowser->CurrentDir() == "/")
+	if (!myBrowser->isLocal() && myBrowser->inRootDirectory())
 	{
-		myBrowser->GetDirectory("/");
+		myBrowser->getDirectory("/");
 		if (isVisible(myBrowser))
 			myBrowser->refresh();
 	}
@@ -448,7 +460,7 @@ void Status::Changes::storedPlaylists()
 void Status::Changes::database()
 {
 	if (isVisible(myBrowser))
-		myBrowser->GetDirectory(myBrowser->CurrentDir());
+		myBrowser->getDirectory(myBrowser->currentDirectory());
 	else
 		myBrowser->main().clear();
 #	ifdef HAVE_TAGLIB_H
@@ -474,7 +486,8 @@ void Status::Changes::playerState()
 			myPlaylist->reloadRemaining();
 			if (Config.design == Design::Alternative)
 			{
-				*wHeader << NC::XY(0, 0) << wclrtoeol << NC::XY(0, 1) << wclrtoeol;
+				*wHeader << NC::XY(0, 0) << NC::TermManip::ClearToEOL;
+				*wHeader << NC::XY(0, 1) << NC::TermManip::ClearToEOL;
 				mixer();
 				flags();
 			}
@@ -497,7 +510,7 @@ void Status::Changes::playerState()
 	{
 		*wFooter << NC::XY(0, 1);
 		if (state.empty())
-			*wFooter << wclrtoeol;
+			*wFooter << NC::TermManip::ClearToEOL;
 		else
 			*wFooter << NC::Format::Bold << state << NC::Format::NoBold;
 	}
@@ -507,7 +520,7 @@ void Status::Changes::playerState()
 	elapsedTime(false);
 }
 
-void Status::Changes::songID()
+void Status::Changes::songID(int song_id)
 {
 	// update information about current song
 	myPlaylist->reloadRemaining();
@@ -516,22 +529,34 @@ void Status::Changes::songID()
 	second_line_scroll_begin = 0;
 	if (m_player_state != MPD::psStop)
 	{
+		auto &pl = myPlaylist->main();
+
+		// try to find the song with new id in the playlist
+		auto it = std::find_if(pl.beginV(), pl.endV(), [song_id](const MPD::Song &s) {
+			return s.getID() == unsigned(song_id);
+		});
+		// if it's not there (playlist may be outdated), fetch it
+		const auto &s = it != pl.endV() ? *it : Mpd.GetCurrentSong();
+
 		GNUC_UNUSED int res;
 		if (!Config.execute_on_song_change.empty())
 			res = system(Config.execute_on_song_change.c_str());
 		
 #		ifdef HAVE_CURL_CURL_H
 		if (Config.fetch_lyrics_in_background)
-			Lyrics::DownloadInBackground(myPlaylist->nowPlayingSong());
+			Lyrics::DownloadInBackground(s);
 #		endif // HAVE_CURL_CURL_H
 		
-		drawTitle(myPlaylist->nowPlayingSong());
+		drawTitle(s);
 		
-		if (Config.autocenter_mode && !myPlaylist->main().isFiltered())
-			myPlaylist->main().highlight(Status::State::currentSongPosition());
+		if (Config.autocenter_mode)
+			pl.highlight(Status::State::currentSongPosition());
 		
 		if (Config.now_playing_lyrics && isVisible(myLyrics) && myLyrics->previousScreen() == myPlaylist)
-			myLyrics->ReloadNP = 1;
+		{
+			if (myLyrics->SetSong(s))
+				myLyrics->Reload = 1;
+		}
 	}
 	elapsedTime(false);
 }
@@ -548,7 +573,7 @@ void Status::Changes::elapsedTime(bool update_elapsed)
 	if (m_player_state == MPD::psStop)
 	{
 		if (Statusbar::isUnlocked() && Config.statusbar_visibility)
-			*wFooter << NC::XY(0, 1) << wclrtoeol;
+			*wFooter << NC::XY(0, 1) << NC::TermManip::ClearToEOL;
 		return;
 	}
 	
@@ -564,11 +589,11 @@ void Status::Changes::elapsedTime(bool update_elapsed)
 			{
 				if (Config.display_bitrate && m_kbps)
 				{
-					tracklength += " [";
+					tracklength += "(";
 					tracklength += boost::lexical_cast<std::string>(m_kbps);
-					tracklength += " kbps]";
+					tracklength += " kbps) ";
 				}
-				tracklength += " [";
+				tracklength += "[";
 				if (m_total_time)
 				{
 					if (Config.display_remaining_time)
@@ -580,17 +605,14 @@ void Status::Changes::elapsedTime(bool update_elapsed)
 						tracklength += MPD::Song::ShowTime(m_elapsed_time);
 					tracklength += "/";
 					tracklength += MPD::Song::ShowTime(m_total_time);
-					tracklength += "]";
 				}
 				else
-				{
 					tracklength += MPD::Song::ShowTime(m_elapsed_time);
-					tracklength += "]";
-				}
+				tracklength += "]";
 				NC::WBuffer np_song;
-				stringToBuffer(ToWString(Charset::utf8ToLocale(np.toString(Config.song_status_format, Config.tags_separator, "$"))), np_song);
-				*wFooter << NC::XY(0, 1) << wclrtoeol << NC::Format::Bold << ps << NC::Format::NoBold;
-				writeCyclicBuffer(np_song, *wFooter, playing_song_scroll_begin, wFooter->getWidth()-ps.length()-tracklength.length(), L" ** ");
+				Format::print(Config.song_status_wformat, np_song, &np);
+				*wFooter << NC::XY(0, 1) << NC::TermManip::ClearToEOL << NC::Format::Bold << ps << ' ' << NC::Format::NoBold;
+				writeCyclicBuffer(np_song, *wFooter, playing_song_scroll_begin, wFooter->getWidth()-ps.length()-tracklength.length()-2, L" ** ");
 				*wFooter << NC::Format::Bold << NC::XY(wFooter->getWidth()-tracklength.length(), 1) << tracklength << NC::Format::NoBold;
 			}
 			break;
@@ -610,14 +632,14 @@ void Status::Changes::elapsedTime(bool update_elapsed)
 			// bitrate here doesn't look good, but it can be moved somewhere else later
 			if (Config.display_bitrate && m_kbps)
 			{
-				tracklength += " ";
+				tracklength += " (";
 				tracklength += boost::lexical_cast<std::string>(m_kbps);
-				tracklength += " kbps";
+				tracklength += " kbps)";
 			}
 
 			NC::WBuffer first, second;
-			stringToBuffer(ToWString(Charset::utf8ToLocale(np.toString(Config.new_header_first_line, Config.tags_separator, "$"))), first);
-			stringToBuffer(ToWString(Charset::utf8ToLocale(np.toString(Config.new_header_second_line, Config.tags_separator, "$"))), second);
+			Format::print(Config.new_header_first_line, first, &np);
+			Format::print(Config.new_header_second_line, second, &np);
 
 			size_t first_len = wideLength(first.str());
 			size_t first_margin = (std::max(tracklength.length()+1, VolumeState.length()))*2;
@@ -628,11 +650,11 @@ void Status::Changes::elapsedTime(bool update_elapsed)
 			size_t second_start = second_len < COLS-second_margin ? (COLS-second_len)/2 : ps.length()+1;
 
 			if (!Global::SeekingInProgress)
-				*wHeader << NC::XY(0, 0) << wclrtoeol << tracklength;
+				*wHeader << NC::XY(0, 0) << NC::TermManip::ClearToEOL << tracklength;
 			*wHeader << NC::XY(first_start, 0);
 			writeCyclicBuffer(first, *wHeader, first_line_scroll_begin, COLS-tracklength.length()-VolumeState.length()-1, L" ** ");
 
-			*wHeader << NC::XY(0, 1) << wclrtoeol << NC::Format::Bold << ps << NC::Format::NoBold;
+			*wHeader << NC::XY(0, 1) << NC::TermManip::ClearToEOL << NC::Format::Bold << ps << NC::Format::NoBold;
 			*wHeader << NC::XY(second_start, 1);
 			writeCyclicBuffer(second, *wHeader, second_line_scroll_begin, COLS-ps.length()-8-2, L" ** ");
 
@@ -668,19 +690,18 @@ void Status::Changes::flags()
 
 			// this is done by raw ncurses because creating another
 			// window only for handling this is quite silly
-			attrset(A_BOLD|COLOR_PAIR(int(Config.state_line_color)));
+			attrset(A_BOLD);
+			color_set(Config.state_line_color.pairNumber(), nullptr);
 			mvhline(1, 0, 0, COLS);
 			if (!switch_state.empty())
 			{
 				mvprintw(1, COLS-switch_state.length()-3, "[");
-				attroff(COLOR_PAIR(int(Config.state_line_color)));
-				attron(COLOR_PAIR(int(Config.state_flags_color)));
+				color_set(Config.state_flags_color.pairNumber(), nullptr);
 				mvprintw(1, COLS-switch_state.length()-2, "%s", switch_state.c_str());
-				attroff(COLOR_PAIR(int(Config.state_flags_color)));
-				attron(COLOR_PAIR(int(Config.state_line_color)));
+				color_set(Config.state_line_color.pairNumber(), nullptr);
 				mvprintw(1, COLS-2, "]");
 			}
-			attrset(0);
+			standend();
 			refresh();
 			break;
 		case Design::Alternative:
@@ -712,10 +733,10 @@ void Status::Changes::mixer()
 	switch (Config.design)
 	{
 		case Design::Classic:
-			VolumeState = " " "Volume" ": ";
+			VolumeState = " Volume: ";
 			break;
 		case Design::Alternative:
-			VolumeState = " " "Vol" ": ";
+			VolumeState = " Vol: ";
 			break;
 	}
 	if (m_volume < 0)

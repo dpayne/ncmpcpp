@@ -19,6 +19,7 @@
  ***************************************************************************/
 
 #include <algorithm>
+#include <time.h>
 
 #include "helpers.h"
 #include "playlist.h"
@@ -53,13 +54,22 @@ bool addSongToPlaylist(const MPD::Song &s, bool play, int position)
 		if (id >= 0)
 		{
 			Statusbar::printf("Added to playlist: %s",
-				s.toString(Config.song_status_format_no_colors, Config.tags_separator)
+				Format::stringify<char>(Config.song_status_format, &s)
 			);
 			if (play)
 				Mpd.PlayID(id);
 			result = true;
 		}
 	}
+	return result;
+}
+
+std::string timeFormat(const char *format, time_t t)
+{
+	char result[32];
+	tm tinfo;
+	localtime_r(&t, &tinfo);
+	strftime(result, sizeof(result), format, &tinfo);
 	return result;
 }
 

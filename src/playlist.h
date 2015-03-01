@@ -25,10 +25,11 @@
 #include <unordered_map>
 
 #include "interfaces.h"
+#include "regex_filter.h"
 #include "screen.h"
 #include "song.h"
 
-struct Playlist: Screen<NC::Menu<MPD::Song>>, Filterable, HasSongs, Searchable, Tabbable
+struct Playlist: Screen<NC::Menu<MPD::Song>>, HasSongs, Searchable, Tabbable
 {
 	Playlist();
 	
@@ -47,28 +48,22 @@ struct Playlist: Screen<NC::Menu<MPD::Song>>, Filterable, HasSongs, Searchable, 
 	
 	virtual bool isMergable() OVERRIDE { return true; }
 	
-	// Filterable implementation
-	virtual bool allowsFiltering() OVERRIDE;
-	virtual std::string currentFilter() OVERRIDE;
-	virtual void applyFilter(const std::string &filter) OVERRIDE;
-	
 	// Searchable implementation
 	virtual bool allowsSearching();
-	virtual bool search(const std::string &constraint) OVERRIDE;
-	virtual void nextFound(bool wrap) OVERRIDE;
-	virtual void prevFound(bool wrap) OVERRIDE;
+	virtual void setSearchConstraint(const std::string &constraint) OVERRIDE;
+	virtual void clearConstraint() OVERRIDE;
+	virtual bool find(SearchDirection direction, bool wrap, bool skip_current) OVERRIDE;
 	
 	// HasSongs implementation
 	virtual ProxySongList proxySongList() OVERRIDE;
 	
 	virtual bool allowsSelection() OVERRIDE;
 	virtual void reverseSelection() OVERRIDE;
-	virtual MPD::SongList getSelectedSongs() OVERRIDE;
+	virtual std::vector<MPD::Song> getSelectedSongs() OVERRIDE;
 	
 	// private members
 	MPD::Song nowPlayingSong();
 	
-	bool isFiltered();
 	void Reverse();
 	
 	void EnableHighlighting();
@@ -100,6 +95,8 @@ private:
 
 	bool m_reload_total_length;
 	bool m_reload_remaining;
+
+	RegexFilter<MPD::Song> m_search_predicate;
 };
 
 extern Playlist *myPlaylist;

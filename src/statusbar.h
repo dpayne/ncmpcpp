@@ -27,13 +27,13 @@
 #include "interfaces.h"
 #include "window.h"
 
-namespace Progressbar {//
+namespace Progressbar {
 
-/// locks progressbar (usually used for seeking)
-void lock();
-
-/// unlocks progressbar (usually right after seeking is done)
-void unlock();
+struct ScopedLock
+{
+	ScopedLock() noexcept;
+	~ScopedLock() noexcept;
+};
 
 /// @return true if progressbar is unlocked
 bool isUnlocked();
@@ -43,13 +43,13 @@ void draw(unsigned elapsed, unsigned time);
 
 }
 
-namespace Statusbar{//
+namespace Statusbar {
 
-/// locks statusbar (usually for prompting the user)
-void lock();
-
-/// unlocks statusbar (usually after prompting the user)
-void unlock();
+struct ScopedLock
+{
+	ScopedLock() noexcept;
+	~ScopedLock() noexcept;
+};
 
 /// @return true if statusbar is unlocked
 bool isUnlocked();
@@ -61,26 +61,47 @@ void tryRedraw();
 /// @return window object that represents statusbar
 NC::Window &put();
 
-namespace Helpers {//
+namespace Helpers {
 
 /// called when statusbar window detects incoming idle notification
 void mpd();
 
 /// called each time user types another character while inside Window::getString
-bool getString(const char *);
+bool mainHook(const char *);
 
-/// called each time user changes current filter (while being inside Window::getString)
-struct ApplyFilterImmediately
+/// prompt and return one of the strings specified in the vector
+std::string promptReturnOneOf(std::vector<std::string> values);
+
+struct ImmediatelyReturnOneOf
 {
+	ImmediatelyReturnOneOf(std::vector<std::string> arg)
+	: m_values(std::move(arg))
+	{ }
+
+	bool operator()(const char *s) const;
+
 	template <typename StringT>
-	ApplyFilterImmediately(Filterable *f, StringT &&filter)
-	: m_f(f), m_s(std::forward<StringT>(filter)) { }
-	
-	bool operator()(const char *s);
-	
+	bool isOneOf(StringT &&s) const {
+		return std::find(m_values.begin(), m_values.end(), std::forward<StringT>(s)) != m_values.end();
+	}
+
 private:
-	Filterable *m_f;
+	std::vector<std::string> m_values;
+};
+
+struct FindImmediately
+{
+	FindImmediately(Searchable *w, SearchDirection direction)
+	: m_w(w), m_direction(direction), m_found(true)
+	{ }
+
+	bool operator()(const char *s);
+
+private:
+	Searchable *m_w;
+	const SearchDirection m_direction;
 	std::string m_s;
+	bool m_found;
 };
 
 struct TryExecuteImmediateCommand

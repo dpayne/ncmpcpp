@@ -15,7 +15,7 @@ ncmpcpp_SOURCES = \
 	curl_handle.cpp \
 	display.cpp \
 	enums.cpp \
-	error.cpp \
+	format.cpp \
 	global.cpp \
 	help.cpp \
 	helpers.cpp \
@@ -72,7 +72,7 @@ noinst_HEADERS = \
 	curl_handle.h \
 	display.h \
 	enums.h \
-	error.h \
+	format.h \
 	global.h \
 	help.h \
 	helpers.h \

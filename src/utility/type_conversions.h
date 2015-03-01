@@ -26,9 +26,7 @@
 #include "window.h"
 #include "enums.h"
 
-NC::Color stringToColor(const std::string &color);
-VisualizerType stringToVisualizerType(const std::string &visualizerType);
-NC::Border stringToBorder(const std::string &border);
+NC::Color charToColor(char c);
 
 std::string tagTypeToString(mpd_tag_type tag);
 MPD::MutableSong::SetFunction tagTypeToSetFunction(mpd_tag_type tag);
@@ -36,6 +34,6 @@ MPD::MutableSong::SetFunction tagTypeToSetFunction(mpd_tag_type tag);
 mpd_tag_type charToTagType(char c);
 MPD::Song::GetFunction charToGetFunction(char c);
 
-std::string itemTypeToString(MPD::ItemType type);
+std::string itemTypeToString(MPD::Item::Type type);
 
 #endif // NCMPCPP_UTILITY_TYPE_CONVERSIONS_H

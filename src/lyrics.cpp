@@ -51,8 +51,8 @@ size_t Lyrics::itsWorkersNumber = 0;
 Lyrics *myLyrics;
 
 Lyrics::Lyrics()
-: Screen(NC::Scrollpad(0, MainStartY, COLS, MainHeight, "", Config.main_color, NC::Border::None))
-, ReloadNP(0),
+: Screen(NC::Scrollpad(0, MainStartY, COLS, MainHeight, "", Config.main_color, NC::Border()))
+, Reload(0),
 #ifdef HAVE_CURL_CURL_H
 isReadyToTake(0), isDownloadInProgress(0),
 #endif // HAVE_CURL_CURL_H
@@ -80,17 +80,12 @@ void Lyrics::update()
 		w.refresh();
 	}
 #	endif // HAVE_CURL_CURL_H
-	if (ReloadNP)
+	if (Reload)
 	{
-		const MPD::Song s = myPlaylist->nowPlayingSong();
-		if (!s.empty() && !s.getArtist().empty() && !s.getTitle().empty())
-		{
-			drawHeader();
-			itsScrollBegin = 0;
-			itsSong = s;
-			Load();
-		}
-		ReloadNP = 0;
+		drawHeader();
+		itsScrollBegin = 0;
+		Load();
+		Reload = 0;
 	}
 }
 
@@ -111,15 +106,14 @@ void Lyrics::switchTo()
 		}
 #		endif // HAVE_CURL_CURL_H
 		
-		const MPD::Song *s = currentSong(myScreen);
+		auto s = currentSong(myScreen);
 		if (!s)
 			return;
-		
-		if (!s->getArtist().empty() && !s->getTitle().empty())
+
+		if (SetSong(*s))
 		{
 			SwitchTo::execute(this);
 			itsScrollBegin = 0;
-			itsSong = *s;
 			Load();
 			drawHeader();
 		}
@@ -133,7 +127,12 @@ void Lyrics::switchTo()
 std::wstring Lyrics::title()
 {
 	std::wstring result = L"Lyrics: ";
-	result += Scroller(ToWString(itsSong.toString("{%a - %t}", ", ")), itsScrollBegin, COLS-result.length()-(Config.design == Design::Alternative ? 2 : Global::VolumeState.length()));
+	
+	result += Scroller(
+		Format::stringify<wchar_t>(Format::parse(L"%a - %t"), &itsSong),
+		itsScrollBegin,
+		COLS-result.length()-(Config.design == Design::Alternative ? 2 : Global::VolumeState.length())
+	);
 	return result;
 }
 
@@ -159,7 +158,7 @@ void Lyrics::DownloadInBackground(const MPD::Song &s)
 		return;
 	}
 	Statusbar::printf("Fetching lyrics for \"%1%\"...",
-		s.toString(Config.song_status_format_no_colors, Config.tags_separator)
+		Format::stringify<char>(Config.song_status_format, &s)
 	);
 	
 	MPD::Song *s_copy = new MPD::Song(s);
@@ -330,7 +329,7 @@ void Lyrics::Load()
 			first = 0;
 		}
 		w.flush();
-		if (ReloadNP)
+		if (Reload)
 			w.refresh();
 	}
 	else
@@ -370,6 +369,17 @@ void Lyrics::Edit()
 	}
 	else
 		res = system(("nohup " + Config.external_editor + " \"" + itsFilename + "\" > /dev/null 2>&1 &").c_str());
+}
+
+bool Lyrics::SetSong(const MPD::Song &s)
+{
+	if (!s.getArtist().empty() && !s.getTitle().empty())
+	{
+		itsSong = s;
+		return true;
+	}
+	else
+		return false;
 }
 
 #ifdef HAVE_CURL_CURL_H

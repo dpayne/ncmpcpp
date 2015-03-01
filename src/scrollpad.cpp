@@ -24,7 +24,7 @@
 
 #include "scrollpad.h"
 
-namespace {//
+namespace {
 
 template <typename PropT>
 bool regexSearch(NC::Buffer &buf, PropT begin, const std::string &ws, PropT end, size_t id, boost::regex::flag_type flags)
@@ -48,7 +48,7 @@ bool regexSearch(NC::Buffer &buf, PropT begin, const std::string &ws, PropT end,
 
 }
 
-namespace NC {//
+namespace NC {
 
 Scrollpad::Scrollpad(size_t startx,
 size_t starty,
@@ -130,7 +130,7 @@ void Scrollpad::clear()
 	delwin(m_window);
 	m_window = newpad(m_height, m_width);
 	setTimeout(m_window_timeout);
-	setColor(m_color, m_bg_color);
+	setColor(m_color);
 	keypad(m_window, 1);
 }
 
@@ -276,7 +276,7 @@ void Scrollpad::reset()
 
 bool Scrollpad::setProperties(Color begin, const std::string &s, Color end, size_t id, boost::regex::flag_type flags)
 {
-	return regexSearch(m_buffer, begin, s, end, id, flags);
+	return regexSearch(m_buffer, std::move(begin), s, std::move(end), id, flags);
 }
 
 bool Scrollpad::setProperties(Format begin, const std::string &s, Format end, size_t id, boost::regex::flag_type flags)

@@ -30,7 +30,7 @@ BindingsConfiguration Bindings;
 
 Key Key::noOp = Key(ERR, NCurses);
 
-namespace {//
+namespace {
 
 Key stringToSpecialKey(const std::string &s)
 {
@@ -366,6 +366,7 @@ void BindingsConfiguration::generateDefaults()
 	if (notBound(k = stringToKey("delete")))
 	{
 		bind(k, Actions::Type::DeletePlaylistItems);
+		bind(k, Actions::Type::DeleteBrowserItems);
 		bind(k, Actions::Type::DeleteStoredPlaylist);
 	}
 	if (notBound(k = stringToKey("right")))
@@ -482,8 +483,6 @@ void BindingsConfiguration::generateDefaults()
 		bind(k, Actions::Type::SortPlaylist);
 	if (notBound(k = stringToKey("ctrl_r")))
 		bind(k, Actions::Type::ReversePlaylist);
-	if (notBound(k = stringToKey("ctrl_f")))
-		bind(k, Actions::Type::ApplyFilter);
 	if (notBound(k = stringToKey("/")))
 	{
 		bind(k, Actions::Type::Find);

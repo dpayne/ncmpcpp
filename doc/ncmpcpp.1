@@ -21,6 +21,9 @@ Use alternative configuration file
 .B \-s, \-\-screen <name>
 Specify the startup screen (<name> may be: help, playlist, browser, search_engine, media_library, playlist_editor, tag_editor, outputs, visualizer, clock)
 .TP
+.B \-S, \-\-slave-screen <name>
+Specify the startup slave screen (<name> may be: help, playlist, browser, search_engine, media_library, playlist_editor, tag_editor, outputs, visualizer, clock)
+.TP
 .B \-?, \-\-help
 Display help.
 .TP
@@ -28,7 +31,7 @@ Display help.
 Display version information.
 .TP
 .SH "CONFIGURATION"
-When ncmpcpp starts, it tries to read user's settings from the ~/.ncmpcpp/config file. If no user's configuration is found, ncmpcpp uses its default configuration. An example configuration file containing all default values is provided with ncmpcpp and can be usually found in /usr/share/doc/ncmpcpp (exact location may depend on used distribution or configure prefix).
+When ncmpcpp starts, it tries to read user's settings from $HOME/.ncmpcpp/config and $XDG_CONFIG_HOME/ncmpcpp/config files. If no configuration is found, ncmpcpp uses its default configuration. An example configuration file containing all default values is provided with ncmpcpp and can be usually found in /usr/share/doc/ncmpcpp (exact location may depend on used distribution or configure prefix).
 
 Note: Configuration option values can either be enclosed in quotation marks or not.
  - If they are enclosed, the leftmost and the rightmost quotation marks are treated as delimiters, therefore it is not necessary to escape quotation marks you use within the value itself.
@@ -76,12 +79,15 @@ Multiply received samples by given value. Very useful for proper visualization o
 .B visualizer_sync_interval = SECONDS
 Defines interval between syncing visualizer and audio outputs.
 .TP
-.B visualizer_type = spectrum/wave
+.B visualizer_type = spectrum/wave/wave_filled/ellipse
 Defines default visualizer type (spectrum is available only if ncmpcpp was compiled with fftw support).
 .TP
 .B visualizer_look = STRING
 Defines visualizer's look (string has to be exactly 2 characters long: first one is for wave whereas second for frequency spectrum).
 .TP
+.B visualizer_color = COLORS
+Comma separated list of colors to be used in music visualization.
+.TP 
 .B system_encoding = ENCODING
 If you use encoding other than utf8, set it in order to handle utf8 encoded strings properly.
 .TP
@@ -108,9 +114,6 @@ Song's format for statusbar.
 .TP
 .B song_library_format
 Format for songs in Media library.
-.TP 
-.B tag_editor_album_format
-Format for albums' list in Tag editor.
 .TP 
 .B song_window_title_format
 Song format for window title.
@@ -265,6 +268,9 @@ If set to "previous", key_screen_switcher will switch between current and last u
 .B startup_screen = SCREEN_NAME
 Screen that has to be displayed at start (playlist by default).
 .TP 
+.B startup_slave_screen = SCREEN_NAME
+Slave screen that has to be displayed at start (nothing by default).
+.TP 
 .B locked_screen_width_part = 20-80
 If you want to lock a screen, ncmpcpp asks for % of locked screen's width to be reserved before that and provides a default value, which is the one you can set here.
 .TP 
@@ -360,9 +366,6 @@ Color of separators used in alternative user interface.
 .TP 
 .B active_column_color = COLOR
 Color of active column's highlight.
-.TP 
-.B visualizer_color = COLOR
-Color of visualization.
 .TP 
 .B active_window_border = COLOR
 Color of active window's border.

@@ -58,11 +58,7 @@ namespace
 #	if !defined(WIN32)
 	void sighandler(int sig)
 	{
-		if (sig == SIGPIPE)
-		{
-			Statusbar::print("SIGPIPE (broken pipe signal) received");
-		}
-		else if (sig == SIGWINCH)
+		if (sig == SIGWINCH)
 		{
 			run_resize_screen = true;
 		}
@@ -79,9 +75,7 @@ namespace
 		std::cerr.rdbuf(cerr_buffer);
 		errorlog.close();
 		Mpd.Disconnect();
-#		ifndef USE_PDCURSES // destroying screen somehow crashes pdcurses
 		NC::destroyScreen();
-#		endif // USE_PDCURSES
 		windowTitle("");
 	}
 }
@@ -111,7 +105,7 @@ int main(int argc, char **argv)
 	cerr_buffer = std::cerr.rdbuf();
 	std::cerr.rdbuf(errorlog.rdbuf());
 	
-	NC::initScreen("ncmpcpp ver. " VERSION, Config.colors_enabled);
+	NC::initScreen(Config.colors_enabled);
 	
 	Actions::OriginalStatusbarVisibility = Config.statusbar_visibility;
 
@@ -122,19 +116,32 @@ int main(int argc, char **argv)
 	Actions::validateScreenSize();
 	Actions::initializeScreens();
 	
-	wHeader = new NC::Window(0, 0, COLS, Actions::HeaderHeight, "", Config.header_color, NC::Border::None);
+	wHeader = new NC::Window(0, 0, COLS, Actions::HeaderHeight, "", Config.header_color, NC::Border());
 	if (Config.header_visibility || Config.design == Design::Alternative)
 		wHeader->display();
 	
-	wFooter = new NC::Window(0, Actions::FooterStartY, COLS, Actions::FooterHeight, "", Config.statusbar_color, NC::Border::None);
-	wFooter->setGetStringHelper(Statusbar::Helpers::getString);
+	wFooter = new NC::Window(0, Actions::FooterStartY, COLS, Actions::FooterHeight, "", Config.statusbar_color, NC::Border());
+	wFooter->setPromptHook(Statusbar::Helpers::mainHook);
 	
 	// initialize global timer
 	Timer = boost::posix_time::microsec_clock::local_time();
 	
 	// initialize playlist
 	myPlaylist->switchTo();
-	
+
+	// go to startup screen
+	if (Config.startup_screen_type != myScreen->type())
+		toScreen(Config.startup_screen_type)->switchTo();
+
+	// lock current screen and go to the slave one if applicable
+	if (Config.startup_slave_screen_type)
+	{
+		auto slave_screen = *Config.startup_slave_screen_type;
+		bool screen_locked = myScreen->lock();
+		if (screen_locked && slave_screen != myScreen->type())
+			toScreen(slave_screen)->switchTo();
+	}
+
 	// local variables
 	bool key_pressed = false;
 	Key input = Key::noOp;
@@ -147,10 +154,11 @@ int main(int argc, char **argv)
 		mousemask(ALL_MOUSE_EVENTS, 0);
 	
 #	ifndef WIN32
-	signal(SIGPIPE, sighandler);
 	signal(SIGWINCH, sighandler);
-	// ignore Ctrl-C
-	sigignore(SIGINT);
+	// we get it after connection with mpd is broken.
+	// just ignore it and wait for the connection to
+	// be reestablished.
+	sigignore(SIGPIPE);
 #	endif // !WIN32
 	
 	while (!Actions::ExitMainLoop)
@@ -220,11 +228,15 @@ int main(int argc, char **argv)
 			}
 			catch (ConversionError &e)
 			{
-				Statusbar::printf("Couldn't convert value \"%1%\" to target type", e.value());
+				Statusbar::printf("Invalid value: %1%", e.value());
 			}
 			catch (OutOfBounds &e)
 			{
 				Statusbar::printf("Error: %1%", e.errorMessage());
+			}
+			catch (NC::PromptAborted &)
+			{
+				Statusbar::printf("Action aborted");
 			}
 
 			if (myScreen == myPlaylist)

@@ -35,7 +35,7 @@
 
 SelectedItemsAdder *mySelectedItemsAdder;
 
-namespace {//
+namespace {
 
 void DisplayComponent(SelectedItemsAdder::Component &menu)
 {
@@ -163,7 +163,7 @@ std::wstring SelectedItemsAdder::title()
 
 void SelectedItemsAdder::enterPressed()
 {
-	w->current().value().run();
+	w->current()->value().run();
 }
 
 void SelectedItemsAdder::mouseButtonPressed(MEVENT me)
@@ -200,11 +200,12 @@ void SelectedItemsAdder::populatePlaylistSelector(BaseScreen *old_screen)
 	if (!in_local_browser)
 	{
 		size_t begin = m_playlist_selector.size();
-		Mpd.GetPlaylists([this](std::string playlist) {
-			m_playlist_selector.addItem(Entry(playlist,
-				boost::bind(&Self::addToExistingPlaylist, this, playlist)
+		for (MPD::PlaylistIterator it = Mpd.GetPlaylists(), end; it != end; ++it)
+		{
+			m_playlist_selector.addItem(Entry(it->path(),
+				boost::bind(&Self::addToExistingPlaylist, this, it->path())
 			));
-		});
+		};
 		std::sort(m_playlist_selector.beginV()+begin, m_playlist_selector.endV(),
 			LocaleBasedSorting(std::locale(), Config.ignore_leading_the));
 		if (begin < m_playlist_selector.size())
@@ -223,12 +224,13 @@ void SelectedItemsAdder::addToCurrentPlaylist()
 
 void SelectedItemsAdder::addToNewPlaylist() const
 {
-	Statusbar::lock();
-	Statusbar::put() << "Save playlist as: ";
-	std::string playlist = Global::wFooter->getString();
-	Statusbar::unlock();
-	if (!playlist.empty())
-		addToExistingPlaylist(playlist);
+	std::string playlist;
+	{
+		Statusbar::ScopedLock slock;
+		Statusbar::put() << "Save playlist as: ";
+		playlist = Global::wFooter->prompt();
+	}
+	addToExistingPlaylist(playlist);
 }
 
 void SelectedItemsAdder::addToExistingPlaylist(const std::string &playlist) const
@@ -269,18 +271,16 @@ void SelectedItemsAdder::addAfterCurrentAlbum() const
 		return;
 	auto &pl = myPlaylist->main();
 	size_t pos = Status::State::currentSongPosition();
-	withUnfilteredMenu(pl, [&pos, &pl]() {
-		std::string album =  pl[pos].value().getAlbum();
-		while (pos < pl.size() && pl[pos].value().getAlbum() == album)
-			++pos;
-	});
+	std::string album =  pl[pos].value().getAlbum();
+	while (pos < pl.size() && pl[pos].value().getAlbum() == album)
+		++pos;
 	bool success = addSongsToPlaylist(m_selected_items.begin(), m_selected_items.end(), false, pos);
 	exitSuccessfully(success);
 }
 
 void SelectedItemsAdder::addAfterHighlightedSong() const
 {
-	size_t pos = myPlaylist->main().current().value().getPosition();
+	size_t pos = myPlaylist->main().current()->value().getPosition();
 	++pos;
 	bool success = addSongsToPlaylist(m_selected_items.begin(), m_selected_items.end(), false, pos);
 	exitSuccessfully(success);

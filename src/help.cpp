@@ -119,7 +119,9 @@ std::string display_keys(const Actions::Type at)
 
 void section(NC::Scrollpad &w, const char *type_, const char *title_)
 {
-	w << "\n  " << NC::Format::Bold << type_ << " - ";
+	w << "\n  " << NC::Format::Bold;
+	if (type_[0] != '\0')
+		w << type_ << " - ";
 	w << title_ << NC::Format::NoBold << "\n\n";
 }
 
@@ -245,7 +247,6 @@ void write_bindings(NC::Scrollpad &w)
 	key(w, Type::UpdateDatabase, "Start music database update");
 	w << '\n';
 	key(w, Type::ExecuteCommand, "Execute command");
-	key(w, Type::ApplyFilter, "Apply filter");
 	key(w, Type::FindItemForward, "Find item forward");
 	key(w, Type::FindItemBackward, "Find item backward");
 	key(w, Type::PreviousFoundItem, "Jump to previous found item");
@@ -289,7 +290,6 @@ void write_bindings(NC::Scrollpad &w)
 	key(w, Type::SavePlaylist, "Save playlist");
 	key(w, Type::SortPlaylist, "Sort playlist");
 	key(w, Type::ReversePlaylist, "Reverse playlist");
-	key(w, Type::FilterPlaylistOnPriorities, "Filter playlist on priorities");
 	key(w, Type::JumpToPlayingSong, "Jump to current song");
 	key(w, Type::TogglePlayingSongCentering, "Toggle playing song centering");
 
@@ -442,12 +442,15 @@ void write_bindings(NC::Scrollpad &w)
 	mouse(w, "Right click", "Toggle output");
 #	endif // ENABLE_OUTPUTS
 
+	section(w, "", "List of available colors");
+	for (int i = 0; i < COLORS; ++i)
+		w << NC::Color(i, NC::Color::transparent) << i+1 << NC::Color::End << " ";
 }
 
 }
 
 Help::Help()
-: Screen(NC::Scrollpad(0, MainStartY, COLS, MainHeight, "", Config.main_color, NC::Border::None))
+: Screen(NC::Scrollpad(0, MainStartY, COLS, MainHeight, "", Config.main_color, NC::Border()))
 {
 	write_bindings(w);
 	w.flush();

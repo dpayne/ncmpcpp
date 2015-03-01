@@ -22,12 +22,14 @@
 #define NCMPCPP_SETTINGS_H
 
 #include <boost/date_time/posix_time/posix_time_types.hpp>
+#include <boost/optional.hpp>
 #include <boost/regex.hpp>
 #include <cassert>
 #include <vector>
 #include <mpd/client.h>
 
 #include "enums.h"
+#include "format.h"
 #include "screen_type.h"
 #include "strbuffer.h"
 
@@ -51,7 +53,7 @@ struct Configuration
 	: playlist_disable_highlight_delay(0), visualizer_sync_interval(0)
 	{ }
 
-	bool read(const std::string &config_path);
+	bool read(const std::vector<std::string> &config_paths);
 
 	std::string ncmpcpp_directory;
 	std::string lyrics_directory;
@@ -60,21 +62,20 @@ struct Configuration
 	std::string visualizer_fifo_path;
 	std::string visualizer_output_name;
 	std::string empty_tag;
-	std::string tags_separator;
-	std::string song_list_format;
-	std::string song_list_format_dollar_free;
-	std::string song_status_format;
-	std::string song_status_format_no_colors;
-	std::string song_window_title_format;
-	std::string song_library_format;
-	std::string tag_editor_album_format;
-	std::string song_in_columns_to_string_format;
-	std::string browser_sort_format;
+
+	Format::AST<char> song_list_format;
+	Format::AST<char> song_window_title_format;
+	Format::AST<char> song_library_format;
+	Format::AST<char> song_columns_mode_format;
+	Format::AST<char> browser_sort_format;
+	Format::AST<char> song_status_format;
+	Format::AST<wchar_t> song_status_wformat;
+	Format::AST<wchar_t> new_header_first_line;
+	Format::AST<wchar_t> new_header_second_line;
+
 	std::string external_editor;
 	std::string system_encoding;
 	std::string execute_on_song_change;
-	std::string new_header_first_line;
-	std::string new_header_second_line;
 	std::string lastfm_preferred_language;
 	std::wstring progressbar;
 	std::wstring visualizer_chars;
@@ -109,7 +110,7 @@ struct Configuration
 	NC::Color statusbar_color;
 	NC::Color alternative_ui_separator_color;
 	NC::Color active_column_color;
-	NC::Color visualizer_color;
+
 	std::vector<NC::Color> visualizer_colors;
 	VisualizerType visualizer_type;
 
@@ -187,6 +188,7 @@ struct Configuration
 	size_t now_playing_suffix_length;
 
 	ScreenType startup_screen_type;
+	boost::optional<ScreenType> startup_slave_screen_type;
 	std::list<ScreenType> screen_sequence;
 
 	SortMode browser_sort_mode;

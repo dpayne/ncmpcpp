@@ -20,6 +20,33 @@
 
 #include "enums.h"
 
+std::ostream &operator<<(std::ostream &os, SearchDirection sd)
+{
+	switch (sd)
+	{
+		case SearchDirection::Backward:
+			os << "backward";
+			break;
+		case SearchDirection::Forward:
+			os << "forward";
+			break;
+	}
+	return os;
+}
+
+std::istream &operator>>(std::istream &is, SearchDirection &sd)
+{
+	std::string ssd;
+	is >> ssd;
+	if (ssd == "backward")
+		sd = SearchDirection::Backward;
+	else if (ssd == "forward")
+		sd = SearchDirection::Forward;
+	else
+		is.setstate(std::ios::failbit);
+	return is;
+}
+
 std::ostream &operator<<(std::ostream &os, SpaceAddMode sam)
 {
 	switch (sam)
@@ -133,6 +160,47 @@ std::istream &operator>>(std::istream &is, Design &ui)
 		ui = Design::Classic;
 	else if (sui == "alternative")
 		ui = Design::Alternative;
+	else
+		is.setstate(std::ios::failbit);
+	return is;
+}
+
+std::ostream &operator<<(std::ostream& os, VisualizerType vt)
+{
+	switch (vt)
+	{
+		case VisualizerType::Wave:
+			os << "sound wave";
+			break;
+		case VisualizerType::WaveFilled:
+			os << "sound wave filled";
+			break;
+#		ifdef HAVE_FFTW3_H
+		case VisualizerType::Spectrum:
+			os << "frequency spectrum";
+			break;
+#		endif // HAVE_FFTW3_H
+		case VisualizerType::Ellipse:
+			os << "sound ellipse";
+			break;
+	}
+	return os;
+}
+
+std::istream &operator>>(std::istream& is, VisualizerType &vt)
+{
+	std::string svt;
+	is >> svt;
+	if (svt == "wave")
+		vt = VisualizerType::Wave;
+	else if (svt == "wave_filled")
+		vt = VisualizerType::WaveFilled;
+#	ifdef HAVE_FFTW3_H
+	else if (svt == "spectrum")
+		vt = VisualizerType::Spectrum;
+#	endif // HAVE_FFTW3_H
+	else if (svt == "ellipse")
+		vt = VisualizerType::Ellipse;
 	else
 		is.setstate(std::ios::failbit);
 	return is;

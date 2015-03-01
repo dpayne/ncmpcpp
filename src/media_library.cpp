@@ -29,10 +29,9 @@
 #include "display.h"
 #include "helpers.h"
 #include "global.h"
-#include "media_library.h"
 #include "mpdpp.h"
 #include "playlist.h"
-#include "regex_filter.h"
+#include "media_library.h"
 #include "status.h"
 #include "statusbar.h"
 #include "utility/comparators.h"
@@ -58,6 +57,18 @@ size_t itsRightColStartX;
 
 typedef MediaLibrary::AlbumEntry AlbumEntry;
 
+MPD::SongIterator getSongsFromAlbum(const AlbumEntry &album)
+{
+	Mpd.StartSearch(true);
+	Mpd.AddSearch(Config.media_lib_primary_tag, album.entry().tag());
+	if (!album.isAllTracksEntry())
+	{
+		Mpd.AddSearch(MPD_TAG_ALBUM, album.entry().album());
+		Mpd.AddSearch(MPD_TAG_DATE, album.entry().date());
+	}
+	return Mpd.CommitSearchSongs();
+}
+
 std::string AlbumToString(const AlbumEntry &ae);
 std::string SongToString(const MPD::Song &s);
 
@@ -82,8 +93,8 @@ public:
 	}
 	bool operator()(const MPD::Song &a, const MPD::Song &b) {
 		for (auto get = GetFuns.begin()+m_offset; get != GetFuns.end(); ++get) {
-			int ret = m_cmp(a.getTags(*get, Config.tags_separator),
-			                b.getTags(*get, Config.tags_separator));
+			int ret = m_cmp(a.getTags(*get),
+			                b.getTags(*get));
 			if (ret != 0)
 				return ret < 0;
 		}
@@ -156,7 +167,7 @@ MediaLibrary::MediaLibrary()
 	itsRightColWidth = COLS-COLS/3*2-1;
 	itsRightColStartX = itsLeftColWidth+itsMiddleColWidth+2;
 	
-	Tags = NC::Menu<PrimaryTag>(0, MainStartY, itsLeftColWidth, MainHeight, Config.titles_visibility ? tagTypeToString(Config.media_lib_primary_tag) + "s" : "", Config.main_color, NC::Border::None);
+	Tags = NC::Menu<PrimaryTag>(0, MainStartY, itsLeftColWidth, MainHeight, Config.titles_visibility ? tagTypeToString(Config.media_lib_primary_tag) + "s" : "", Config.main_color, NC::Border());
 	Tags.setHighlightColor(Config.active_column_color);
 	Tags.cyclicScrolling(Config.use_cyclic_scrolling);
 	Tags.centeredCursor(Config.centered_cursor);
@@ -170,7 +181,7 @@ MediaLibrary::MediaLibrary()
 			menu << Charset::utf8ToLocale(tag);
 	});
 	
-	Albums = NC::Menu<AlbumEntry>(itsMiddleColStartX, MainStartY, itsMiddleColWidth, MainHeight, Config.titles_visibility ? "Albums" : "", Config.main_color, NC::Border::None);
+	Albums = NC::Menu<AlbumEntry>(itsMiddleColStartX, MainStartY, itsMiddleColWidth, MainHeight, Config.titles_visibility ? "Albums" : "", Config.main_color, NC::Border());
 	Albums.setHighlightColor(Config.main_highlight_color);
 	Albums.cyclicScrolling(Config.use_cyclic_scrolling);
 	Albums.centeredCursor(Config.centered_cursor);
@@ -180,13 +191,15 @@ MediaLibrary::MediaLibrary()
 		menu << Charset::utf8ToLocale(AlbumToString(menu.drawn()->value()));
 	});
 	
-	Songs = NC::Menu<MPD::Song>(itsRightColStartX, MainStartY, itsRightColWidth, MainHeight, Config.titles_visibility ? "Songs" : "", Config.main_color, NC::Border::None);
+	Songs = NC::Menu<MPD::Song>(itsRightColStartX, MainStartY, itsRightColWidth, MainHeight, Config.titles_visibility ? "Songs" : "", Config.main_color, NC::Border());
 	Songs.setHighlightColor(Config.main_highlight_color);
 	Songs.cyclicScrolling(Config.use_cyclic_scrolling);
 	Songs.centeredCursor(Config.centered_cursor);
 	Songs.setSelectedPrefix(Config.selected_item_prefix);
 	Songs.setSelectedSuffix(Config.selected_item_suffix);
-	Songs.setItemDisplayer(boost::bind(Display::Songs, _1, songsProxyList(), Config.song_library_format));
+	Songs.setItemDisplayer(boost::bind(
+		Display::Songs, _1, songsProxyList(), Config.song_library_format
+	));
 	
 	w = &Tags;
 }
@@ -254,147 +267,143 @@ void MediaLibrary::update()
 {
 	if (hasTwoColumns)
 	{
-		if (Albums.reallyEmpty() || m_albums_update_request)
+		if (Albums.empty() || m_albums_update_request)
 		{
-			Albums.clearSearchResults();
 			m_albums_update_request = false;
 			std::map<std::tuple<std::string, std::string, std::string>, time_t> albums;
-			Mpd.GetDirectoryRecursive("/", [&albums](MPD::Song s) {
+			for (MPD::SongIterator s = Mpd.GetDirectoryRecursive("/"), end; s != end; ++s)
+			{
+				std::string tag;
 				unsigned idx = 0;
-				std::string tag = s.get(Config.media_lib_primary_tag, idx);
-				do
+				while (!(tag = s->get(Config.media_lib_primary_tag, idx++)).empty())
 				{
-					auto key = std::make_tuple(tag, s.getAlbum(), s.getDate());
+					auto key = std::make_tuple(std::move(tag), s->getAlbum(), s->getDate());
 					auto it = albums.find(key);
 					if (it == albums.end())
-						albums[key] = s.getMTime();
+						albums[std::move(key)] = s->getMTime();
 					else
-						it->second = s.getMTime();
+						it->second = s->getMTime();
 				}
-				while (!(tag = s.get(Config.media_lib_primary_tag, ++idx)).empty());
-			});
-			withUnfilteredMenuReapplyFilter(Albums, [this, &albums]() {
-				size_t idx = 0;
-				for (auto it = albums.begin(); it != albums.end(); ++it, ++idx)
-				{
-					auto &&entry = AlbumEntry(Album(
-						std::move(std::get<0>(it->first)),
-						std::move(std::get<1>(it->first)),
-						std::move(std::get<2>(it->first)),
-						it->second));
-					if (idx < Albums.size())
-						Albums[idx].value() = entry;
-					else
-						Albums.addItem(entry);
-				}
+			}
+			size_t idx = 0;
+			for (const auto &album : albums)
+			{
+				auto entry = AlbumEntry(Album(
+					std::move(std::get<0>(album.first)),
+					std::move(std::get<1>(album.first)),
+					std::move(std::get<2>(album.first)),
+					album.second)
+				);
 				if (idx < Albums.size())
-					Albums.resizeList(idx);
-				std::sort(Albums.beginV(), Albums.endV(), SortAlbumEntries());
-			});
+					Albums[idx].value() = std::move(entry);
+				else
+					Albums.addItem(std::move(entry));
+				++idx;
+			}
+			if (idx < Albums.size())
+				Albums.resizeList(idx);
+			std::sort(Albums.beginV(), Albums.endV(), SortAlbumEntries());
 			Albums.refresh();
 		}
 	}
 	else
 	{
-		if (Tags.reallyEmpty() || m_tags_update_request)
+		if (Tags.empty() || m_tags_update_request)
 		{
-			Tags.clearSearchResults();
 			m_tags_update_request = false;
 			std::map<std::string, time_t> tags;
 			if (Config.media_library_sort_by_mtime)
 			{
-				Mpd.GetDirectoryRecursive("/", [&tags](MPD::Song s) {
+				for (MPD::SongIterator s = Mpd.GetDirectoryRecursive("/"), end; s != end; ++s)
+				{
+					std::string tag;
 					unsigned idx = 0;
-					std::string tag = s.get(Config.media_lib_primary_tag, idx);
-					do
+					while (!(tag = s->get(Config.media_lib_primary_tag, idx++)).empty())
 					{
 						auto it = tags.find(tag);
 						if (it == tags.end())
-							tags[tag] = s.getMTime();
+							tags[std::move(tag)] = s->getMTime();
 						else
-							it->second = std::max(it->second, s.getMTime());
+							it->second = std::max(it->second, s->getMTime());
 					}
-					while (!(tag = s.get(Config.media_lib_primary_tag, ++idx)).empty());
-				});
+				}
 			}
 			else
 			{
-				Mpd.GetList(Config.media_lib_primary_tag, [&tags](std::string tag) {
-					tags[tag] = 0;
-				});
+				MPD::StringIterator tag = Mpd.GetList(Config.media_lib_primary_tag), end;
+				for (; tag != end; ++tag)
+					tags[std::move(*tag)] = 0;
 			}
-			withUnfilteredMenuReapplyFilter(Tags, [this, &tags]() {
-				size_t idx = 0;
-				for (auto it = tags.begin(); it != tags.end(); ++it, ++idx)
-				{
-					auto &&tag = PrimaryTag(std::move(it->first), it->second);
-					if (idx < Tags.size())
-						Tags[idx].value() = tag;
-					else
-						Tags.addItem(tag);
-				}
+			size_t idx = 0;
+			for (const auto &tag : tags)
+			{
+				auto ptag = PrimaryTag(std::move(tag.first), tag.second);
 				if (idx < Tags.size())
-					Tags.resizeList(idx);
-				std::sort(Tags.beginV(), Tags.endV(), SortPrimaryTags());
-			});
+					Tags[idx].value() = std::move(ptag);
+				else
+					Tags.addItem(std::move(ptag));
+				++idx;
+			}
+			if (idx < Tags.size())
+				Tags.resizeList(idx);
+			std::sort(Tags.beginV(), Tags.endV(), SortPrimaryTags());
 			Tags.refresh();
 		}
 		
 		if (!Tags.empty()
-		&& ((Albums.reallyEmpty() && Global::Timer - m_timer > m_fetching_delay) || m_albums_update_request)
+		&& ((Albums.empty() && Global::Timer - m_timer > m_fetching_delay) || m_albums_update_request)
 		)
 		{
-			Albums.clearSearchResults();
 			m_albums_update_request = false;
-			auto &primary_tag = Tags.current().value().tag();
+			auto &primary_tag = Tags.current()->value().tag();
 			Mpd.StartSearch(true);
 			Mpd.AddSearch(Config.media_lib_primary_tag, primary_tag);
 			std::map<std::tuple<std::string, std::string>, time_t> albums;
-			Mpd.CommitSearchSongs([&albums](MPD::Song s) {
-				auto key = std::make_tuple(s.getAlbum(), s.getDate());
+			for (MPD::SongIterator s = Mpd.CommitSearchSongs(), end; s != end; ++s)
+			{
+				auto key = std::make_tuple(s->getAlbum(), s->getDate());
 				auto it = albums.find(key);
 				if (it == albums.end())
-					albums[key] = s.getMTime();
+					albums[std::move(key)] = s->getMTime();
 				else
-					it->second = s.getMTime();
-			});
-			withUnfilteredMenuReapplyFilter(Albums, [this, &albums, &primary_tag]() {
-				size_t idx = 0;
-				for (auto it = albums.begin(); it != albums.end(); ++it, ++idx)
-				{
-					auto &&entry = AlbumEntry(Album(
-						primary_tag,
-						std::move(std::get<0>(it->first)),
-						std::move(std::get<1>(it->first)),
-						it->second));
-					if (idx < Albums.size())
-					{
-						Albums[idx].value() = entry;
-						Albums[idx].setSeparator(false);
-					}
-					else
-						Albums.addItem(entry);
-				}
+					it->second = std::max(it->second, s->getMTime());
+			};
+			size_t idx = 0;
+			for (const auto &album : albums)
+			{
+				auto entry = AlbumEntry(Album(
+					primary_tag,
+					std::move(std::get<0>(album.first)),
+					std::move(std::get<1>(album.first)),
+					album.second)
+				);
 				if (idx < Albums.size())
-					Albums.resizeList(idx);
-				std::sort(Albums.beginV(), Albums.endV(), SortAlbumEntries());
-				if (albums.size() > 1)
 				{
-					Albums.addSeparator();
-					Albums.addItem(AlbumEntry::mkAllTracksEntry(primary_tag));
+					Albums[idx].value() = std::move(entry);
+					Albums[idx].setSeparator(false);
 				}
-			});
+				else
+					Albums.addItem(std::move(entry));
+				++idx;
+			}
+			if (idx < Albums.size())
+				Albums.resizeList(idx);
+			std::sort(Albums.beginV(), Albums.endV(), SortAlbumEntries());
+			if (albums.size() > 1)
+			{
+				Albums.addSeparator();
+				Albums.addItem(AlbumEntry::mkAllTracksEntry(primary_tag));
+			}
 			Albums.refresh();
 		}
 	}
 	
 	if (!Albums.empty()
-	&& ((Songs.reallyEmpty() && Global::Timer - m_timer > m_fetching_delay) || m_songs_update_request)
+	&& ((Songs.empty() && Global::Timer - m_timer > m_fetching_delay) || m_songs_update_request)
 	)
 	{
-		Songs.clearSearchResults();
 		m_songs_update_request = false;
-		auto &album = Albums.current().value();
+		auto &album = Albums.current()->value();
 		Mpd.StartSearch(true);
 		Mpd.AddSearch(Config.media_lib_primary_tag, album.entry().tag());
 		if (!album.isAllTracksEntry())
@@ -402,30 +411,28 @@ void MediaLibrary::update()
 			Mpd.AddSearch(MPD_TAG_ALBUM, album.entry().album());
 			Mpd.AddSearch(MPD_TAG_DATE, album.entry().date());
 		}
-		withUnfilteredMenuReapplyFilter(Songs, [this, &album]() {
-			size_t idx = 0;
-			Mpd.CommitSearchSongs([this, &idx](MPD::Song s) {
-				bool is_playlist = myPlaylist->checkForSong(s);
-				if (idx < Songs.size())
-				{
-					Songs[idx].value() = s;
-					Songs[idx].setBold(is_playlist);
-				}
-				else
-					Songs.addItem(s, is_playlist);
-				++idx;
-			});
+		size_t idx = 0;
+		for (MPD::SongIterator s = Mpd.CommitSearchSongs(), end; s != end; ++s, ++idx)
+		{
+			bool is_playlist = myPlaylist->checkForSong(*s);
 			if (idx < Songs.size())
-				Songs.resizeList(idx);
-			std::sort(Songs.begin(), Songs.end(), SortSongs(!album.isAllTracksEntry()));
-		});
+			{
+				Songs[idx].value() = std::move(*s);
+				Songs[idx].setBold(is_playlist);
+			}
+			else
+				Songs.addItem(std::move(*s), is_playlist);
+		};
+		if (idx < Songs.size())
+			Songs.resizeList(idx);
+		std::sort(Songs.begin(), Songs.end(), SortSongs(!album.isAllTracksEntry()));
 		Songs.refresh();
 	}
 }
 
 int MediaLibrary::windowTimeout()
 {
-	if (Albums.reallyEmpty() || Songs.reallyEmpty())
+	if (Albums.empty() || Songs.empty())
 		return m_window_timeout;
 	else
 		return Screen<WindowType>::windowTimeout();
@@ -450,7 +457,7 @@ void MediaLibrary::spacePressed()
 		}
 		else if (isActiveWindow(Albums))
 		{
-			if (!Albums.current().value().isAllTracksEntry())
+			if (!Albums.current()->value().isAllTracksEntry())
 			{
 				size_t idx = Albums.choice();
 				Albums[idx].setSelected(!Albums[idx].isSelected());
@@ -564,139 +571,56 @@ void MediaLibrary::mouseButtonPressed(MEVENT me)
 
 /***********************************************************************/
 
-bool MediaLibrary::allowsFiltering()
-{
-	return true;
-}
-
-std::string MediaLibrary::currentFilter()
-{
-	std::string filter;
-	if (isActiveWindow(Tags))
-		filter = RegexFilter<PrimaryTag>::currentFilter(Tags);
-	else if (isActiveWindow(Albums))
-		filter = RegexItemFilter<AlbumEntry>::currentFilter(Albums);
-	else if (isActiveWindow(Songs))
-		filter = RegexFilter<MPD::Song>::currentFilter(Songs);
-	return filter;
-}
-
-void MediaLibrary::applyFilter(const std::string &filter)
-{
-	if (filter.empty())
-	{
-		if (isActiveWindow(Tags))
-		{
-			Tags.clearFilter();
-			Tags.clearFilterResults();
-		}
-		else if (isActiveWindow(Albums))
-		{
-			Albums.clearFilter();
-			Albums.clearFilterResults();
-		}
-		else if (isActiveWindow(Songs))
-		{
-			Songs.clearFilter();
-			Songs.clearFilterResults();
-		}
-		return;
-	}
-	try
-	{
-		if (isActiveWindow(Tags))
-		{
-			Tags.showAll();
-			auto rx = RegexFilter<PrimaryTag>(
-				boost::regex(filter, Config.regex_type), TagEntryMatcher);
-			Tags.filter(Tags.begin(), Tags.end(), rx);
-		}
-		else if (isActiveWindow(Albums))
-		{
-			Albums.showAll();
-			auto fun = boost::bind(AlbumEntryMatcher, _1, _2, true);
-			auto rx = RegexItemFilter<AlbumEntry>(
-				boost::regex(filter, Config.regex_type), fun);
-			Albums.filter(Albums.begin(), Albums.end(), rx);
-		}
-		else if (isActiveWindow(Songs))
-		{
-			Songs.showAll();
-			auto rx = RegexFilter<MPD::Song>(
-				boost::regex(filter, Config.regex_type), SongEntryMatcher);
-			Songs.filter(Songs.begin(), Songs.end(), rx);
-		}
-	}
-	catch (boost::bad_expression &) { }
-}
-
-/***********************************************************************/
-
 bool MediaLibrary::allowsSearching()
 {
 	return true;
 }
 
-bool MediaLibrary::search(const std::string &constraint)
+void MediaLibrary::setSearchConstraint(const std::string &constraint)
 {
-	if (constraint.empty())
+	if (isActiveWindow(Tags))
 	{
-		if (isActiveWindow(Tags))
-			Tags.clearSearchResults();
-		else if (isActiveWindow(Albums))
-			Albums.clearSearchResults();
-		else if (isActiveWindow(Songs))
-			Songs.clearSearchResults();
-		return false;
+		m_tags_search_predicate = RegexFilter<PrimaryTag>(
+			boost::regex(constraint, Config.regex_type),
+			TagEntryMatcher
+		);
 	}
-	try
+	else if (isActiveWindow(Albums))
 	{
-		bool result = false;
-		if (isActiveWindow(Tags))
-		{
-			auto rx = RegexFilter<PrimaryTag>(
-				boost::regex(constraint, Config.regex_type), TagEntryMatcher);
-			result = Tags.search(Tags.begin(), Tags.end(), rx);
-		}
-		else if (isActiveWindow(Albums))
-		{
-			auto fun = boost::bind(AlbumEntryMatcher, _1, _2, false);
-			auto rx = RegexItemFilter<AlbumEntry>(
-				boost::regex(constraint, Config.regex_type), fun);
-			result = Albums.search(Albums.begin(), Albums.end(), rx);
-		}
-		else if (isActiveWindow(Songs))
-		{
-			auto rx = RegexFilter<MPD::Song>(
-				boost::regex(constraint, Config.regex_type), SongEntryMatcher);
-			result = Songs.search(Songs.begin(), Songs.end(), rx);
-		}
-		return result;
+		m_albums_search_predicate = RegexItemFilter<AlbumEntry>(
+			boost::regex(constraint, Config.regex_type),
+			boost::bind(AlbumEntryMatcher, _1, _2, false)
+		);
 	}
-	catch (boost::bad_expression &)
+	else if (isActiveWindow(Songs))
 	{
-		return false;
+		m_songs_search_predicate = RegexFilter<MPD::Song>(
+			boost::regex(constraint, Config.regex_type),
+			SongEntryMatcher
+		);
 	}
 }
 
-void MediaLibrary::nextFound(bool wrap)
+void MediaLibrary::clearConstraint()
 {
 	if (isActiveWindow(Tags))
-		Tags.nextFound(wrap);
+		m_tags_search_predicate.clear();
 	else if (isActiveWindow(Albums))
-		Albums.nextFound(wrap);
+		m_albums_search_predicate.clear();
 	else if (isActiveWindow(Songs))
-		Songs.nextFound(wrap);
+		m_songs_search_predicate.clear();
 }
 
-void MediaLibrary::prevFound(bool wrap)
+bool MediaLibrary::find(SearchDirection direction, bool wrap, bool skip_current)
 {
+	bool result = false;
 	if (isActiveWindow(Tags))
-		Tags.prevFound(wrap);
+		result = search(Tags, m_tags_search_predicate, direction, wrap, skip_current);
 	else if (isActiveWindow(Albums))
-		Albums.prevFound(wrap);
+		result = search(Albums, m_albums_search_predicate, direction, wrap, skip_current);
 	else if (isActiveWindow(Songs))
-		Songs.prevFound(wrap);
+		result = search(Songs, m_songs_search_predicate, direction, wrap, skip_current);
+	return result;
 }
 
 /***********************************************************************/
@@ -730,15 +654,19 @@ void MediaLibrary::reverseSelection()
 		reverseSelectionHelper(Songs.begin(), Songs.end());
 }
 
-MPD::SongList MediaLibrary::getSelectedSongs()
+std::vector<MPD::Song> MediaLibrary::getSelectedSongs()
 {
-	MPD::SongList result;
+	std::vector<MPD::Song> result;
 	if (isActiveWindow(Tags))
 	{
 		auto tag_handler = [&result](const std::string &tag) {
 			Mpd.StartSearch(true);
 			Mpd.AddSearch(Config.media_lib_primary_tag, tag);
-			Mpd.CommitSearchSongs(vectorMoveInserter(result));
+			std::copy(
+				std::make_move_iterator(Mpd.CommitSearchSongs()),
+				std::make_move_iterator(MPD::SongIterator()),
+				std::back_inserter(result)
+			);
 		};
 		bool any_selected = false;
 		for (auto &e : Tags)
@@ -751,7 +679,7 @@ MPD::SongList MediaLibrary::getSelectedSongs()
 		}
 		// if no item is selected, add current one
 		if (!any_selected && !Tags.empty())
-			tag_handler(Tags.current().value().tag());
+			tag_handler(Tags.current()->value().tag());
 	}
 	else if (isActiveWindow(Albums))
 	{
@@ -767,30 +695,38 @@ MPD::SongList MediaLibrary::getSelectedSongs()
 					Mpd.AddSearch(Config.media_lib_primary_tag, sc.entry().tag());
 				else
 					Mpd.AddSearch(Config.media_lib_primary_tag,
-					              Tags.current().value().tag());
+					              Tags.current()->value().tag());
 					Mpd.AddSearch(MPD_TAG_ALBUM, sc.entry().album());
 				Mpd.AddSearch(MPD_TAG_DATE, sc.entry().date());
 				size_t begin = result.size();
-				Mpd.CommitSearchSongs(vectorMoveInserter(result));
+				std::copy(
+					std::make_move_iterator(Mpd.CommitSearchSongs()),
+					std::make_move_iterator(MPD::SongIterator()),
+					std::back_inserter(result)
+				);
 				std::sort(result.begin()+begin, result.end(), SortSongs(false));
 			}
 		}
 		// if no item is selected, add songs from right column
 		if (!any_selected && !Albums.empty())
 		{
-			withUnfilteredMenu(Songs, [this, &result]() {
-				result.insert(result.end(), Songs.beginV(), Songs.endV());
-			});
+			size_t begin = result.size();
+			std::copy(
+				std::make_move_iterator(getSongsFromAlbum(Albums.current()->value().entry())),
+				std::make_move_iterator(MPD::SongIterator()),
+				std::back_inserter(result)
+			);
+			std::sort(result.begin()+begin, result.end(), SortSongs(false));
 		}
 	}
 	else if (isActiveWindow(Songs))
 	{
-		for (auto it = Songs.begin(); it != Songs.end(); ++it)
-			if (it->isSelected())
-				result.push_back(it->value());
+		for (const auto &s : Songs)
+			if (s.isSelected())
+				result.push_back(s.value());
 		// if no item is selected, add current one
 		if (result.empty() && !Songs.empty())
-			result.push_back(Songs.current().value());
+			result.push_back(Songs.current()->value());
 	}
 	return result;
 }
@@ -802,12 +738,12 @@ bool MediaLibrary::previousColumnAvailable()
 	assert(!hasTwoColumns || !isActiveWindow(Tags));
 	if (isActiveWindow(Songs))
 	{
-		if (!Albums.reallyEmpty() && (hasTwoColumns || !Tags.reallyEmpty()))
+		if (!Albums.empty() && (hasTwoColumns || !Tags.empty()))
 			return true;
 	}
 	else if (isActiveWindow(Albums))
 	{
-		if (!hasTwoColumns && !Tags.reallyEmpty())
+		if (!hasTwoColumns && !Tags.empty())
 			return true;
 	}
 	return false;
@@ -836,12 +772,12 @@ bool MediaLibrary::nextColumnAvailable()
 	assert(!hasTwoColumns || !isActiveWindow(Tags));
 	if (isActiveWindow(Tags))
 	{
-		if (!Albums.reallyEmpty() && !Songs.reallyEmpty())
+		if (!Albums.empty() && !Songs.empty())
 			return true;
 	}
 	else if (isActiveWindow(Albums))
 	{
-		if (!Songs.reallyEmpty())
+		if (!Songs.empty())
 			return true;
 	}
 	return false;
@@ -918,9 +854,7 @@ void MediaLibrary::toggleSortMode()
 		Config.media_library_sort_by_mtime ? "modification time" : "name");
 	if (hasTwoColumns)
 	{
-		withUnfilteredMenuReapplyFilter(Albums, [this]() {
-			std::sort(Albums.beginV(), Albums.endV(), SortAlbumEntries());
-		});
+		std::sort(Albums.beginV(), Albums.endV(), SortAlbumEntries());
 		Albums.refresh();
 		Songs.clear();
 		if (Config.titles_visibility)
@@ -933,17 +867,14 @@ void MediaLibrary::toggleSortMode()
 	}
 	else
 	{
-		withUnfilteredMenuReapplyFilter(Tags, [this]() {
-			// if we already have modification times,
-			// just resort. otherwise refetch the list.
-			if (!Tags.empty() && Tags[0].value().mtime() > 0)
-			{
-				std::sort(Tags.beginV(), Tags.endV(), SortPrimaryTags());
-				Tags.refresh();
-			}
-			else
-				Tags.clear();
-		});
+		// if we already have modification times, just resort. otherwise refetch the list.
+		if (!Tags.empty() && Tags[0].value().mtime() > 0)
+		{
+			std::sort(Tags.beginV(), Tags.endV(), SortPrimaryTags());
+			Tags.refresh();
+		}
+		else
+			Tags.clear();
 		Albums.clear();
 		Songs.clear();
 	}
@@ -970,13 +901,12 @@ void MediaLibrary::LocateSong(const MPD::Song &s)
 		switchTo();
 	Statusbar::put() << "Jumping to song...";
 	Global::wFooter->refresh();
-	
+	// FIXME: use std::find
 	if (!hasTwoColumns)
 	{
-		Tags.showAll();
 		if (Tags.empty())
 			update();
-		if (primary_tag != Tags.current().value().tag())
+		if (primary_tag != Tags.current()->value().tag())
 		{
 			for (size_t i = 0; i < Tags.size(); ++i)
 			{
@@ -991,15 +921,14 @@ void MediaLibrary::LocateSong(const MPD::Song &s)
 		}
 	}
 	
-	Albums.showAll();
 	if (Albums.empty())
 		update();
 	
 	std::string album = s.getAlbum();
 	std::string date = s.getDate();
-	if ((hasTwoColumns && Albums.current().value().entry().tag() != primary_tag)
-	||  album != Albums.current().value().entry().album()
-	||  date != Albums.current().value().entry().date())
+	if ((hasTwoColumns && Albums.current()->value().entry().tag() != primary_tag)
+	||  album != Albums.current()->value().entry().album()
+	||  date != Albums.current()->value().entry().date())
 	{
 		for (size_t i = 0; i < Albums.size(); ++i)
 		{
@@ -1014,11 +943,10 @@ void MediaLibrary::LocateSong(const MPD::Song &s)
 		}
 	}
 	
-	Songs.showAll();
 	if (Songs.empty())
 		update();
 	
-	if (s != Songs.current().value())
+	if (s != Songs.current()->value())
 	{
 		for (size_t i = 0; i < Songs.size(); ++i)
 		{
@@ -1040,31 +968,34 @@ void MediaLibrary::LocateSong(const MPD::Song &s)
 void MediaLibrary::AddToPlaylist(bool add_n_play)
 {
 	if (isActiveWindow(Songs) && !Songs.empty())
-		addSongToPlaylist(Songs.current().value(), add_n_play);
+		addSongToPlaylist(Songs.current()->value(), add_n_play);
 	else
 	{
 		if ((!Tags.empty() && isActiveWindow(Tags))
-		||  (isActiveWindow(Albums) && Albums.current().value().isAllTracksEntry()))
+		||  (isActiveWindow(Albums) && Albums.current()->value().isAllTracksEntry()))
 		{
-			MPD::SongList list;
 			Mpd.StartSearch(true);
-			Mpd.AddSearch(Config.media_lib_primary_tag, Tags.current().value().tag());
-			Mpd.CommitSearchSongs(vectorMoveInserter(list));
+			Mpd.AddSearch(Config.media_lib_primary_tag, Tags.current()->value().tag());
+			std::vector<MPD::Song> list(
+				std::make_move_iterator(Mpd.CommitSearchSongs()),
+				std::make_move_iterator(MPD::SongIterator())
+			);
 			bool success = addSongsToPlaylist(list.begin(), list.end(), add_n_play, -1);
 			std::string tag_type = boost::locale::to_lower(
 				tagTypeToString(Config.media_lib_primary_tag));
 			Statusbar::printf("Songs with %1% \"%2%\" added%3%",
-				tag_type, Tags.current().value().tag(), withErrors(success)
+				tag_type, Tags.current()->value().tag(), withErrors(success)
 			);
 		}
 		else if (isActiveWindow(Albums))
 		{
-			bool success;
-			withUnfilteredMenu(Songs, [&]() {
-				success = addSongsToPlaylist(Songs.beginV(), Songs.endV(), add_n_play, -1);
-			});
+			std::vector<MPD::Song> list(
+				std::make_move_iterator(getSongsFromAlbum(Albums.current()->value())),
+				std::make_move_iterator(MPD::SongIterator())
+			);
+			bool success = addSongsToPlaylist(list.begin(), list.end(), add_n_play, -1);
 			Statusbar::printf("Songs from album \"%1%\" added%2%",
-				Albums.current().value().entry().album(), withErrors(success)
+				Albums.current()->value().entry().album(), withErrors(success)
 			);
 		}
 	}
@@ -1082,7 +1013,7 @@ void MediaLibrary::AddToPlaylist(bool add_n_play)
 	}
 }
 
-namespace {//
+namespace {
 
 std::string AlbumToString(const AlbumEntry &ae)
 {
@@ -1108,7 +1039,9 @@ std::string AlbumToString(const AlbumEntry &ae)
 
 std::string SongToString(const MPD::Song &s)
 {
-	return s.toString(Config.song_library_format, Config.tags_separator);
+	return Format::stringify<char>(
+		Config.song_library_format, &s//FIXME, Config.tags_separator
+	);
 }
 
 bool TagEntryMatcher(const boost::regex &rx, const MediaLibrary::PrimaryTag &pt)

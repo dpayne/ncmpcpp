@@ -64,11 +64,11 @@ protected:
 	virtual bool isLockable() OVERRIDE { return true; }
 
 private:
-	NC::Color toColor( size_t, size_t);
 	void DrawSoundWave(int16_t *, ssize_t, size_t, size_t);
-	void DrawSoundWaveFill(int16_t *, ssize_t, size_t, size_t);
 	void DrawSoundWaveStereo(int16_t *, int16_t *, ssize_t, size_t);
+	void DrawSoundWaveFill(int16_t *, ssize_t, size_t, size_t);
 	void DrawSoundWaveFillStereo(int16_t *, int16_t *, ssize_t, size_t);
+	void DrawSoundEllipse(int16_t *, ssize_t, size_t, size_t);
 	void DrawSoundEllipseStereo(int16_t *, int16_t *, ssize_t, size_t);
 #	ifdef HAVE_FFTW3_H
 	void DrawFrequencySpectrum(int16_t *, ssize_t, size_t, size_t);
@@ -79,13 +79,14 @@ private:
 	boost::posix_time::ptime m_timer;
 
 	int m_fifo;
-	unsigned m_samples;
+	size_t m_samples;
 #	ifdef HAVE_FFTW3_H
-	unsigned m_fftw_results;
-	double *m_freq_magnitudes;
+	size_t m_fftw_results;
 	double *m_fftw_input;
 	fftw_complex *m_fftw_output;
 	fftw_plan m_fftw_plan;
+
+	std::vector<double> m_freq_magnitudes;
 #	endif // HAVE_FFTW3_H
 };
 

@@ -29,7 +29,7 @@
 
 #include <mpd/client.h>
 
-namespace MPD {//
+namespace MPD {
 
 struct Song
 {
@@ -43,6 +43,14 @@ struct Song
 	virtual ~Song() { }
 	
 	Song(mpd_song *s);
+
+	Song(const Song &rhs) : m_song(rhs.m_song), m_hash(rhs.m_hash) { }
+	Song(Song &&rhs) : m_song(std::move(rhs.m_song)), m_hash(rhs.m_hash) { }
+	Song &operator=(Song rhs) {
+		m_song = std::move(rhs.m_song);
+		m_hash = rhs.m_hash;
+		return *this;
+	}
 	
 	std::string get(mpd_tag_type type, unsigned idx = 0) const;
 	
@@ -64,7 +72,7 @@ struct Song
 	virtual std::string getLength(unsigned idx = 0) const;
 	virtual std::string getPriority(unsigned idx = 0) const;
 	
-	virtual std::string getTags(GetFunction f, const std::string &tags_separator) const;
+	virtual std::string getTags(GetFunction f) const;
 	
 	virtual unsigned getDuration() const;
 	virtual unsigned getPosition() const;
@@ -76,9 +84,6 @@ struct Song
 	virtual bool isStream() const;
 	
 	virtual bool empty() const;
-	
-	virtual std::string toString(const std::string &fmt, const std::string &tags_separator,
-	                             const std::string &escape_chars = "") const;
 	
 	bool operator==(const Song &rhs) const {
 		if (m_hash != rhs.m_hash)
@@ -94,19 +99,13 @@ struct Song
 	const char *c_uri() const { return m_song ? mpd_song_get_uri(m_song.get()) : ""; }
 
 	static std::string ShowTime(unsigned length);
-	static void validateFormat(const std::string &fmt);
-	
-	static const char FormatEscapeCharacter = 1;
+
+	static std::string TagsSeparator;
 
 private:
-	std::string ParseFormat(std::string::const_iterator &it, const std::string &tags_separator,
-							const std::string &escape_chars) const;
-	
 	std::shared_ptr<mpd_song> m_song;
 	size_t m_hash;
 };
-
-typedef std::vector<Song> SongList;
 
 }
 

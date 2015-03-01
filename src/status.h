@@ -24,7 +24,7 @@
 #include "interfaces.h"
 #include "mpdpp.h"
 
-namespace Status {//
+namespace Status {
 
 void handleClientError(MPD::ClientError &e);
 void handleServerError(MPD::ServerError &e);
@@ -53,13 +53,13 @@ int volume();
 
 }
 
-namespace Changes {//
+namespace Changes {
 
 void playlist(unsigned previous_version);
 void storedPlaylists();
 void database();
 void playerState();
-void songID();
+void songID(int song_id);
 void elapsedTime(bool update_elapsed);
 void flags();
 void mixer();

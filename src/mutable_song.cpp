@@ -22,7 +22,7 @@
 #include <boost/algorithm/string/split.hpp>
 #include "mutable_song.h"
 
-namespace MPD {//
+namespace MPD {
 
 std::string MutableSong::getArtist(unsigned idx) const
 {
@@ -178,10 +178,10 @@ void MutableSong::setMTime(time_t mtime)
 	m_mtime = mtime;
 }
 
-void MutableSong::setTags(SetFunction set, const std::string &value, const std::string &delimiter)
+void MutableSong::setTags(SetFunction set, const std::string &value)
 {
 	std::vector<std::string> tags;
-	boost::iter_split(tags, value, boost::first_finder(delimiter));
+	boost::iter_split(tags, value, boost::first_finder(Song::TagsSeparator));
 	size_t i = 0;
 	for (; i < tags.size(); ++i)
 		(this->*set)(tags[i], i);

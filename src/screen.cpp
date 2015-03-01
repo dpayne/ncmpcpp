@@ -30,15 +30,15 @@ using Global::myInactiveScreen;
 
 void drawSeparator(int x)
 {
-	attron(COLOR_PAIR(int(Config.main_color)));
+	color_set(Config.main_color.pairNumber(), nullptr);
 	mvvline(Global::MainStartY, x, 0, Global::MainHeight);
-	attroff(COLOR_PAIR(int(Config.main_color)));
+	standend();
 	refresh();
 }
 
 void genericMouseButtonPressed(NC::Window &w, MEVENT me)
 {
-	if (me.bstate & BUTTON2_PRESSED)
+	if (me.bstate & BUTTON5_PRESSED)
 	{
 		if (Config.mouse_list_scroll_whole_page)
 			w.scroll(NC::Scroll::PageDown);
@@ -58,7 +58,7 @@ void genericMouseButtonPressed(NC::Window &w, MEVENT me)
 
 void scrollpadMouseButtonPressed(NC::Scrollpad &w, MEVENT me)
 {
-	if (me.bstate & BUTTON2_PRESSED)
+	if (me.bstate & BUTTON5_PRESSED)
 	{
 		for (size_t i = 0; i < Config.lines_scrolled; ++i)
 			w.scroll(NC::Scroll::Down);

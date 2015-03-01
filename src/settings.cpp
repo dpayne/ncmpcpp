@@ -37,20 +37,7 @@ Configuration Config;
 
 namespace {
 
-std::string remove_dollar_formatting(const std::string &s)
-{
-	std::string result;
-	for (size_t i = 0; i < s.size(); ++i)
-	{
-		if (s[i] != '$')
-			result += s[i];
-		else
-			++i;
-	}
-	return result;
-}
-
-std::pair<std::vector<Column>, std::string> generate_columns(const std::string &format)
+std::vector<Column> generate_columns(const std::string &format)
 {
 	std::vector<Column> result;
 	std::string width;
@@ -58,8 +45,11 @@ std::pair<std::vector<Column>, std::string> generate_columns(const std::string &
 	while (!(width = getEnclosedString(format, '(', ')', &pos)).empty())
 	{
 		Column col;
-		col.color = stringToColor(getEnclosedString(format, '[', ']', &pos));
-		std::string tag_type = getEnclosedString(format, '{', '}', &pos);
+		auto scolor = getEnclosedString(format, '[', ']', &pos);
+		if (scolor.empty())
+			col.color = NC::Color::Default;
+		else
+			col.color = boost::lexical_cast<NC::Color>(scolor);
 
 		if (*width.rbegin() == 'f')
 		{
@@ -69,6 +59,7 @@ std::pair<std::vector<Column>, std::string> generate_columns(const std::string &
 		else
 			col.fixed = false;
 
+		auto tag_type = getEnclosedString(format, '{', '}', &pos);
 		// alternative name
 		size_t tag_type_colon_pos = tag_type.find(':');
 		if (tag_type_colon_pos != std::string::npos)
@@ -124,25 +115,32 @@ std::pair<std::vector<Column>, std::string> generate_columns(const std::string &
 			it->stretch_limit = stretch_limit;
 	}
 
-	std::string string_format;
-	// generate format for converting tags in columns to string for Playlist::SongInColumnsToString()
-	char tag[] = "{% }|";
-	string_format = "{";
-	for (auto it = result.begin(); it != result.end(); ++it)
-	{
-		for (std::string::const_iterator j = it->type.begin(); j != it->type.end(); ++j)
-		{
-			tag[2] = *j;
-			string_format += tag;
-		}
-		*string_format.rbegin() = ' ';
-	}
-	if (string_format.length() == 1) // only '{'
-		string_format += '}';
-	else
-		*string_format.rbegin() = '}';
+	return result;
+}
 
-	return std::make_pair(std::move(result), std::move(string_format));
+Format::AST<char> columns_to_format(const std::vector<Column> &columns)
+{
+	std::vector<Format::Expression<char>> result;
+
+	auto column = columns.begin();
+	while (true)
+	{
+		Format::Any<char> any;
+		for (const auto &type : column->type)
+		{
+			auto f = charToGetFunction(type);
+			assert(f != nullptr);
+			any.base().push_back(f);
+		}
+		result.push_back(std::move(any));
+
+		if (++column != columns.end())
+			result.push_back(" ");
+		else
+			break;
+	}
+
+	return Format::AST<char>(std::move(result));
 }
 
 void add_slash_at_the_end(std::string &s)
@@ -154,32 +152,44 @@ void add_slash_at_the_end(std::string &s)
 	}
 }
 
-std::string adjust_directory(std::string &&s)
+std::string adjust_directory(std::string s)
 {
 	add_slash_at_the_end(s);
 	expand_home(s);
 	return s;
 }
 
-std::string adjust_and_validate_format(std::string &&format)
-{
-	MPD::Song::validateFormat(format);
-	format = "{" + format + "}";
-	return format;
-}
-
 // parser worker for buffer
 template <typename ValueT, typename TransformT>
 option_parser::worker buffer(NC::Buffer &arg, ValueT &&value, TransformT &&map)
 {
-	return option_parser::worker(assign<std::string>(arg, [&arg, map](std::string &&s) {
-		return map(stringToBuffer(s));
+	return option_parser::worker(assign<std::string>(arg, [&arg, map](std::string s) {
+		NC::Buffer result;
+		auto ast = Format::parse(s, Format::Flags::Color | Format::Flags::Format);
+		Format::print(ast, result, nullptr);
+		return map(std::move(result));
 	}), defaults_to(arg, map(std::forward<ValueT>(value))));
 }
 
+option_parser::worker border(NC::Border &arg, NC::Border value)
+{
+	return option_parser::worker(assign<std::string>(arg, [&arg](std::string s) {
+		NC::Border result;
+		if (!s.empty())
+		{
+			try {
+				result = boost::lexical_cast<NC::Color>(s);
+			} catch (boost::bad_lexical_cast &) {
+				throw std::runtime_error("invalid border: " + s);
+			}
+		}
+		return result;
+	}), defaults_to(arg, std::move(value)));
 }
 
-bool Configuration::read(const std::string &config_path)
+}
+
+bool Configuration::read(const std::vector<std::string> &config_paths)
 {
 	std::string mpd_host;
 	unsigned mpd_port;
@@ -194,7 +204,9 @@ bool Configuration::read(const std::string &config_path)
 		lyrics_directory, "~/.lyrics/", adjust_directory
 	));
 	p.add("mpd_host", assign_default<std::string>(
-		mpd_host, "localhost", [](std::string &&host) {
+		mpd_host, "localhost", [](std::string host) {
+			// host can be a path to ipc socket, relative to home directory
+			expand_home(host);
 			Mpd.SetHostname(host);
 			return host;
 	}));
@@ -230,19 +242,33 @@ bool Configuration::read(const std::string &config_path)
 		visualizer_sync_interval, 30, [](unsigned v) {
 			return boost::posix_time::seconds(v);
 	}));
-	p.add("visualizer_type", option_parser::worker([this](std::string &&v) {
-		visualizer_type = stringToVisualizerType( v );
-	}, defaults_to(visualizer_type, VisualizerType::Wave)
+	p.add("visualizer_type", assign_default(
+		visualizer_type, VisualizerType::Wave
 	));
 	p.add("visualizer_look", assign_default<std::string>(
-		visualizer_chars, "●▮", [](std::string &&s) {
+		visualizer_chars, "●▮", [](std::string s) {
 			auto result = ToWString(std::move(s));
 			typedef std::wstring::size_type size_type;
 			boundsCheck(result.size(), size_type(2), size_type(2));
 			return result;
 	}));
+	p.add("visualizer_color", option_parser::worker([this](std::string v) {
+		boost::sregex_token_iterator color(v.begin(), v.end(), boost::regex("\\w+")), end;
+		for (; color != end; ++color)
+		{
+			try {
+				visualizer_colors.push_back(boost::lexical_cast<NC::Color>(*color));
+			} catch (boost::bad_lexical_cast &) {
+				throw std::runtime_error("invalid color: " + *color);
+			}
+		}
+		if (visualizer_colors.empty())
+			throw std::runtime_error("empty list");
+	}, [this] {
+		visualizer_colors = { NC::Color::Blue, NC::Color::Cyan, NC::Color::Green, NC::Color::Yellow, NC::Color::Magenta, NC::Color::Red };
+	}));
 	p.add("system_encoding", assign_default<std::string>(
-		system_encoding, "", [](std::string &&enc) {
+		system_encoding, "", [](std::string enc) {
 #			ifdef HAVE_LANGINFO_H
 			// try to autodetect system encoding
 			if (enc.empty())
@@ -262,71 +288,74 @@ bool Configuration::read(const std::string &config_path)
 		message_delay_time, 5
 	));
 	p.add("song_list_format", assign_default<std::string>(
-		song_list_format, "{%a - }{%t}|{$8%f$9}$R{$3(%l)$9}", [this](std::string &&s) {
-			auto result = adjust_and_validate_format(std::move(s));
-			song_list_format_dollar_free = remove_dollar_formatting(result);
-			return result;
+		song_list_format, "{%a - }{%t}|{$8%f$9}$R{$3(%l)$9}", [](std::string v) {
+			return Format::parse(v);
 	}));
 	p.add("song_status_format", assign_default<std::string>(
-		song_status_format, "{{%a{ \"%b\"{ (%y)}} - }{%t}}|{%f}", [this](std::string &&s) {
-			auto result = adjust_and_validate_format(std::move(s));
-			if (result.find("$") != std::string::npos)
-				song_status_format_no_colors = stringToBuffer(result).str();
-			else
-				song_status_format_no_colors = result;
-			return result;
+		song_status_format, "{{%a{ \"%b\"{ (%y)}} - }{%t}}|{%f}", [this](std::string v) {
+			const unsigned flags = Format::Flags::All ^ Format::Flags::OutputSwitch;
+			// precompute wide format for status display
+			song_status_wformat = Format::parse(ToWString(v), flags);
+			return Format::parse(v, flags);
 	}));
 	p.add("song_library_format", assign_default<std::string>(
-		song_library_format, "{%n - }{%t}|{%f}", adjust_and_validate_format
+		song_library_format, "{%n - }{%t}|{%f}", [](std::string v) {
+			return Format::parse(v);
+	}));
+	p.add("alternative_header_first_line_format", assign_default<std::string>(
+		new_header_first_line, "$b$1$aqqu$/a$9 {%t}|{%f} $1$atqq$/a$9$/b", [](std::string v) {
+			return Format::parse(ToWString(std::move(v)),
+				Format::Flags::All ^ Format::Flags::OutputSwitch
+			);
+	}));
+	p.add("alternative_header_second_line_format", assign_default<std::string>(
+		new_header_second_line, "{{$4$b%a$/b$9}{ - $7%b$9}{ ($4%y$9)}}|{%D}", [](std::string v) {
+			return Format::parse(ToWString(std::move(v)),
+				Format::Flags::All ^ Format::Flags::OutputSwitch
+			);
+	}));
+	p.add("now_playing_prefix", buffer(
+		now_playing_prefix, NC::Buffer::init(NC::Format::Bold), [this](NC::Buffer buf) {
+			now_playing_prefix_length = wideLength(ToWString(buf.str()));
+			return buf;
+	}));
+	p.add("now_playing_suffix", buffer(
+		now_playing_suffix, NC::Buffer::init(NC::Format::NoBold), [this](NC::Buffer buf) {
+			now_playing_suffix_length = wideLength(ToWString(buf.str()));
+			return buf;
+	}));
+	p.add("browser_playlist_prefix", buffer(
+		browser_playlist_prefix, NC::Buffer::init(NC::Color::Red, "playlist", NC::Color::End, ' '), id_()
 	));
-	p.add("tag_editor_album_format", assign_default<std::string>(
-		tag_editor_album_format, "{(%y) }%b", adjust_and_validate_format
+	p.add("selected_item_prefix", buffer(
+		selected_item_prefix, NC::Buffer::init(NC::Color::Magenta), [this](NC::Buffer buf) {
+			selected_item_prefix_length = wideLength(ToWString(buf.str()));
+			return buf;
+	}));
+	p.add("selected_item_suffix", buffer(
+		selected_item_suffix, NC::Buffer::init(NC::Color::End), [this](NC::Buffer buf) {
+			selected_item_suffix_length = wideLength(ToWString(buf.str()));
+			return buf;
+	}));
+	p.add("modified_item_prefix", buffer(
+		modified_item_prefix, NC::Buffer::init(NC::Color::Green, "> ", NC::Color::End), id_()
 	));
 	p.add("browser_sort_mode", assign_default(
 		browser_sort_mode, SortMode::Name
 	));
 	p.add("browser_sort_format", assign_default<std::string>(
-		browser_sort_format, "{%a - }{%t}|{%f} {(%l)}", adjust_and_validate_format
-	));
-	p.add("alternative_header_first_line_format", assign_default<std::string>(
-		new_header_first_line, "$b$1$aqqu$/a$9 {%t}|{%f} $1$atqq$/a$9$/b", adjust_and_validate_format
-	));
-	p.add("alternative_header_second_line_format", assign_default<std::string>(
-		new_header_second_line, "{{$4$b%a$/b$9}{ - $7%b$9}{ ($4%y$9)}}|{%D}", adjust_and_validate_format
-	));
-	p.add("now_playing_prefix", buffer(
-		now_playing_prefix, NC::Buffer(NC::Format::Bold), [this](NC::Buffer &&buf) {
-			now_playing_prefix_length = wideLength(ToWString(buf.str()));
-			return buf;
+		browser_sort_format, "{%a - }{%t}|{%f} {(%l)}", [](std::string v) {
+			return Format::parse(v, Format::Flags::Tag);
 	}));
-	p.add("now_playing_suffix", buffer(
-		now_playing_suffix, NC::Buffer(NC::Format::NoBold), [this](NC::Buffer &&buf) {
-			now_playing_suffix_length = wideLength(ToWString(buf.str()));
-			return buf;
-	}));
-	p.add("browser_playlist_prefix", buffer(
-		browser_playlist_prefix, NC::Buffer(NC::Color::Red, "playlist", NC::Color::End, ' '), id_()
-	));
-	p.add("selected_item_prefix", buffer(
-		selected_item_prefix, NC::Buffer(NC::Color::Magenta), [this](NC::Buffer &&buf) {
-			selected_item_prefix_length = wideLength(ToWString(buf.str()));
-			return buf;
-	}));
-	p.add("selected_item_suffix", buffer(
-		selected_item_suffix, NC::Buffer(NC::Color::End), [this](NC::Buffer &&buf) {
-			selected_item_suffix_length = wideLength(ToWString(buf.str()));
-			return buf;
-	}));
-	p.add("modified_item_prefix", buffer(
-		modified_item_prefix, NC::Buffer(NC::Color::Green, "> ", NC::Color::End), id_()
-	));
 	p.add("song_window_title_format", assign_default<std::string>(
-		song_window_title_format, "{%a - }{%t}|{%f}", adjust_and_validate_format
-	));
+		song_window_title_format, "{%a - }{%t}|{%f}", [](std::string v) {
+			return Format::parse(v, Format::Flags::Tag);
+	}));
 	p.add("song_columns_list_format", assign_default<std::string>(
 		columns_format, "(20)[]{a} (6f)[green]{NE} (50)[white]{t|f:Title} (20)[cyan]{b} (7f)[magenta]{l}",
-			[this](std::string &&v) {
-				boost::tie(columns, song_in_columns_to_string_format) = generate_columns(v);
+			[this](std::string v) {
+				columns = generate_columns(v);
+				song_columns_mode_format = columns_to_format(columns);
 				return v;
 	}));
 	p.add("execute_on_song_change", assign_default(
@@ -372,7 +401,7 @@ bool Configuration::read(const std::string &config_path)
 		centered_cursor, false
 	));
 	p.add("progressbar_look", assign_default<std::string>(
-		progressbar, "=>", [](std::string &&s) {
+		progressbar, "=>", [](std::string s) {
 			auto result = ToWString(std::move(s));
 			typedef std::wstring::size_type size_type;
 			boundsCheck(result.size(), size_type(2), size_type(3));
@@ -383,7 +412,7 @@ bool Configuration::read(const std::string &config_path)
 	p.add("progressbar_boldness", yes_no(
 		progressbar_boldness, true
 	));
-	p.add("default_place_to_search_in", option_parser::worker([this](std::string &&v) {
+	p.add("default_place_to_search_in", option_parser::worker([this](std::string v) {
 		if (v == "database")
 			search_in_db = true;
 		else if (v == "playlist")
@@ -398,7 +427,7 @@ bool Configuration::read(const std::string &config_path)
 	p.add("data_fetching_delay", yes_no(
 		data_fetching_delay, true
 	));
-	p.add("media_library_primary_tag", option_parser::worker([this](std::string &&v) {
+	p.add("media_library_primary_tag", option_parser::worker([this](std::string v) {
 		if (v == "artist")
 			media_lib_primary_tag = MPD_TAG_ARTIST;
 		else if (v == "album_artist")
@@ -413,10 +442,9 @@ bool Configuration::read(const std::string &config_path)
 			media_lib_primary_tag = MPD_TAG_PERFORMER;
 		else
 			throw std::runtime_error("invalid argument: " + v);
-		regex_type |= boost::regex::icase;
-	}, defaults_to(regex_type, boost::regex::literal | boost::regex::icase)
+	}, defaults_to(media_lib_primary_tag, MPD_TAG_ARTIST)
 	));
-	p.add("default_find_mode", option_parser::worker([this](std::string &&v) {
+	p.add("default_find_mode", option_parser::worker([this](std::string v) {
 		if (v == "wrapped")
 			wrapped_search = true;
 		else if (v == "normal")
@@ -425,7 +453,7 @@ bool Configuration::read(const std::string &config_path)
 			throw std::runtime_error("invalid argument: " + v);
 	}, defaults_to(wrapped_search, true)
 	));
-	p.add("default_space_mode", option_parser::worker([this](std::string &&v) {
+	p.add("default_space_mode", option_parser::worker([this](std::string v) {
 		if (v == "add")
 			space_selects = false;
 		else if (v == "select")
@@ -479,7 +507,7 @@ bool Configuration::read(const std::string &config_path)
 	p.add("show_hidden_files_in_local_browser", yes_no(
 		local_browser_show_hidden_files, false
 	));
-	p.add("screen_switcher_mode", option_parser::worker([this](std::string &&v) {
+	p.add("screen_switcher_mode", option_parser::worker([this](std::string v) {
 		if (v == "previous")
 			screen_switcher_previous = true;
 		else
@@ -499,11 +527,20 @@ bool Configuration::read(const std::string &config_path)
 		screen_switcher_previous = false;
 		screen_sequence = { ScreenType::Playlist, ScreenType::Browser };
 	}));
-	p.add("startup_screen", option_parser::worker([this](std::string &&v) {
+	p.add("startup_screen", option_parser::worker([this](std::string v) {
 		startup_screen_type = stringtoStartupScreenType(v);
 		if (startup_screen_type == ScreenType::Unknown)
 			throw std::runtime_error("unknown screen: " + v);
 	}, defaults_to(startup_screen_type, ScreenType::Playlist)
+	));
+	p.add("startup_slave_screen", option_parser::worker([this](std::string v) {
+		if (!v.empty())
+		{
+			startup_slave_screen_type = stringtoStartupScreenType(v);
+			if (startup_slave_screen_type == ScreenType::Unknown)
+				throw std::runtime_error("unknown slave screen: " + v);
+		}
+	}, defaults_to(startup_slave_screen_type, boost::none)
 	));
 	p.add("locked_screen_width_part", assign_default<double>(
 		locked_screen_width_part, 50.0, [](double v) {
@@ -530,7 +567,7 @@ bool Configuration::read(const std::string &config_path)
 	p.add("display_remaining_time", yes_no(
 		display_remaining_time, false
 	));
-	p.add("regular_expressions", option_parser::worker([this](std::string &&v) {
+	p.add("regular_expressions", option_parser::worker([this](std::string v) {
 		if (v == "none")
 			regex_type = boost::regex::literal;
 		else if (v == "basic")
@@ -558,7 +595,7 @@ bool Configuration::read(const std::string &config_path)
 		empty_tag, "<empty>"
 	));
 	p.add("tags_separator", assign_default(
-		tags_separator, " | "
+		MPD::Song::TagsSeparator, " | "
 	));
 	p.add("tag_editor_extended_numeration", yes_no(
 		tag_editor_extended_numeration, false
@@ -625,25 +662,23 @@ bool Configuration::read(const std::string &config_path)
 	p.add("active_column_color", assign_default(
 		active_column_color, NC::Color::Red
 	));
-	p.add("visualizer_color", option_parser::worker([this](std::string &&v) {
-		boost::sregex_token_iterator i(v.begin(), v.end(), boost::regex("\\w+")), j;
-		for (; i != j; ++i)
-		{
-			auto color = stringToColor(*i);
-			visualizer_colors.push_back(color);
-		}
-	}, [this] {
-			visualizer_colors = { NC::Color::Blue, NC::Color::Cyan, NC::Color::Green, NC::Color::Yellow, NC::Color::Red };
-	}));
-	p.add("window_border_color", assign_default(
-		window_border, NC::Border::Green
+	p.add("window_border_color", border(
+		window_border, NC::Color::Green
 	));
-	p.add("active_window_border", assign_default(
-		active_window_border, NC::Border::Red
+	p.add("active_window_border", border(
+		active_window_border, NC::Color::Red
 	));
 
-	std::ifstream f(config_path);
-	return p.run(f);
+	return std::all_of(
+		config_paths.begin(),
+		config_paths.end(),
+		[&p](const std::string &config_path) {
+			std::ifstream f(config_path);
+			if (f.is_open())
+				std::clog << "Reading configuration from " << config_path << "...\n";
+			return p.run(f);
+		}
+	) && p.initialize_undefined();
 }
 
 /* vim: set tabstop=4 softtabstop=4 shiftwidth=4 noexpandtab : */

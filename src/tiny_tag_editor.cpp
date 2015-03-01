@@ -49,7 +49,7 @@ using Global::MainStartY;
 TinyTagEditor *myTinyTagEditor;
 
 TinyTagEditor::TinyTagEditor()
-: Screen(NC::Menu<NC::Buffer>(0, MainStartY, COLS, MainHeight, "", Config.main_color, NC::Border::None))
+: Screen(NC::Menu<NC::Buffer>(0, MainStartY, COLS, MainHeight, "", Config.main_color, NC::Border()))
 {
 	w.setHighlightColor(Config.main_highlight_color);
 	w.cyclicScrolling(Config.use_cyclic_scrolling);
@@ -101,25 +101,26 @@ std::wstring TinyTagEditor::title()
 void TinyTagEditor::enterPressed()
 {
 	size_t option = w.choice();
-	Statusbar::lock();
 	if (option < 19) // separator after comment
 	{
+		Statusbar::ScopedLock slock;
 		size_t pos = option-8;
 		Statusbar::put() << NC::Format::Bold << SongInfo::Tags[pos].Name << ": " << NC::Format::NoBold;
-		itsEdited.setTags(SongInfo::Tags[pos].Set, Global::wFooter->getString(
-			itsEdited.getTags(SongInfo::Tags[pos].Get, Config.tags_separator)), Config.tags_separator);
+		itsEdited.setTags(SongInfo::Tags[pos].Set, Global::wFooter->prompt(
+			itsEdited.getTags(SongInfo::Tags[pos].Get)));
 		w.at(option).value().clear();
 		w.at(option).value() << NC::Format::Bold << SongInfo::Tags[pos].Name << ':' << NC::Format::NoBold << ' ';
-		ShowTag(w.at(option).value(), itsEdited.getTags(SongInfo::Tags[pos].Get, Config.tags_separator));
+		ShowTag(w.at(option).value(), itsEdited.getTags(SongInfo::Tags[pos].Get));
 	}
 	else if (option == 20)
 	{
+		Statusbar::ScopedLock slock;
 		Statusbar::put() << NC::Format::Bold << "Filename: " << NC::Format::NoBold;
 		std::string filename = itsEdited.getNewName().empty() ? itsEdited.getName() : itsEdited.getNewName();
 		size_t dot = filename.rfind(".");
 		std::string extension = filename.substr(dot);
 		filename = filename.substr(0, dot);
-		std::string new_name = Global::wFooter->getString(filename);
+		std::string new_name = Global::wFooter->prompt(filename);
 		if (!new_name.empty())
 		{
 			itsEdited.setNewName(new_name + extension);
@@ -127,7 +128,6 @@ void TinyTagEditor::enterPressed()
 			w.at(option).value() << NC::Format::Bold << "Filename:" << NC::Format::NoBold << ' ' << (itsEdited.getNewName().empty() ? itsEdited.getName() : itsEdited.getNewName());
 		}
 	}
-	Statusbar::unlock();
 	
 	if (option == 22)
 	{
@@ -140,9 +140,9 @@ void TinyTagEditor::enterPressed()
 			else
 			{
 				if (m_previous_screen == myPlaylist)
-					myPlaylist->main().current().value() = itsEdited;
+					myPlaylist->main().current()->value() = itsEdited;
 				else if (m_previous_screen == myBrowser)
-					myBrowser->GetDirectory(myBrowser->CurrentDir());
+					myBrowser->getDirectory(myBrowser->currentDirectory());
 			}
 		}
 		else
@@ -226,7 +226,7 @@ bool TinyTagEditor::getTags()
 	for (const SongInfo::Metadata *m = SongInfo::Tags; m->Name; ++m, ++pos)
 	{
 		w.at(pos).value() << NC::Format::Bold << m->Name << ":" << NC::Format::NoBold << ' ';
-		ShowTag(w.at(pos).value(), itsEdited.getTags(m->Get, Config.tags_separator));
+		ShowTag(w.at(pos).value(), itsEdited.getTags(m->Get));
 	}
 	
 	w.at(20).value() << NC::Format::Bold << "Filename:" << NC::Format::NoBold << ' ' << itsEdited.getName();

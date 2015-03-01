@@ -24,9 +24,10 @@
 #include <boost/date_time/posix_time/posix_time_types.hpp>
 
 #include "interfaces.h"
+#include "regex_filter.h"
 #include "screen.h"
 
-struct PlaylistEditor: Screen<NC::Window *>, Filterable, HasColumns, HasSongs, Searchable, Tabbable
+struct PlaylistEditor: Screen<NC::Window *>, HasColumns, HasSongs, Searchable, Tabbable
 {
 	PlaylistEditor();
 	
@@ -47,23 +48,18 @@ struct PlaylistEditor: Screen<NC::Window *>, Filterable, HasColumns, HasSongs, S
 	
 	virtual bool isMergable() OVERRIDE { return true; }
 	
-	// Filterable implementation
-	virtual bool allowsFiltering() OVERRIDE;
-	virtual std::string currentFilter() OVERRIDE;
-	virtual void applyFilter(const std::string &filter) OVERRIDE;
-	
 	// Searchable implementation
 	virtual bool allowsSearching() OVERRIDE;
-	virtual bool search(const std::string &constraint) OVERRIDE;
-	virtual void nextFound(bool wrap) OVERRIDE;
-	virtual void prevFound(bool wrap) OVERRIDE;
+	virtual void setSearchConstraint(const std::string &constraint) OVERRIDE;
+	virtual void clearConstraint() OVERRIDE;
+	virtual bool find(SearchDirection direction, bool wrap, bool skip_current) OVERRIDE;
 	
 	// HasSongs implementation
 	virtual ProxySongList proxySongList() OVERRIDE;
 	
 	virtual bool allowsSelection() OVERRIDE;
 	virtual void reverseSelection() OVERRIDE;
-	virtual MPD::SongList getSelectedSongs() OVERRIDE;
+	virtual std::vector<MPD::Song> getSelectedSongs() OVERRIDE;
 	
 	// HasColumns implementation
 	virtual bool previousColumnAvailable() OVERRIDE;
@@ -78,11 +74,10 @@ struct PlaylistEditor: Screen<NC::Window *>, Filterable, HasColumns, HasSongs, S
 	void requestPlaylistsUpdate() { m_playlists_update_requested = true; }
 	void requestContentsUpdate() { m_content_update_requested = true; }
 	
-	virtual void Locate(const std::string &);
-	bool isContentFiltered();
+	virtual void Locate(const MPD::Playlist &playlist);
 	ProxySongList contentProxyList();
 	
-	NC::Menu<std::string> Playlists;
+	NC::Menu<MPD::Playlist> Playlists;
 	NC::Menu<MPD::Song> Content;
 	
 protected:
@@ -98,6 +93,9 @@ private:
 
 	const int m_window_timeout;
 	const boost::posix_time::time_duration m_fetching_delay;
+
+	RegexFilter<MPD::Playlist> m_playlists_search_predicate;
+	RegexFilter<MPD::Song> m_content_search_predicate;
 };
 
 extern PlaylistEditor *myPlaylistEditor;

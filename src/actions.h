@@ -26,7 +26,7 @@
 #include <string>
 #include "window.h"
 
-namespace Actions {//
+namespace Actions {
 
 enum class Type
 {
@@ -47,12 +47,12 @@ enum class Type
 	JumpToPlaylistEditor, ToggleScreenLock, JumpToTagEditor, JumpToPositionInSong,
 	ReverseSelection, RemoveSelection, SelectAlbum, AddSelectedItems,
 	CropMainPlaylist, CropPlaylist, ClearMainPlaylist, ClearPlaylist, SortPlaylist,
-	ReversePlaylist, ApplyFilter, Find, FindItemForward, FindItemBackward,
+	ReversePlaylist, Find, FindItemForward, FindItemBackward,
 	NextFoundItem, PreviousFoundItem, ToggleFindMode, ToggleReplayGainMode,
 	ToggleSpaceMode, ToggleAddMode, ToggleMouse, ToggleBitrateVisibility,
 	AddRandomItems, ToggleBrowserSortMode, ToggleLibraryTagType,
 	ToggleMediaLibrarySortMode, RefetchLyrics,
-	SetSelectedItemsPriority, SetVisualizerSampleMultiplier, FilterPlaylistOnPriorities,
+	SetSelectedItemsPriority, SetVisualizerSampleMultiplier,
 	ShowSongInfo, ShowArtistInfo, ShowLyrics, Quit, NextScreen, PreviousScreen,
 	ShowHelp, ShowPlaylist, ShowBrowser, ChangeBrowseMode, ShowSearchEngine,
 	ResetSearchEngine, ShowMediaLibrary, ToggleMediaLibraryColumnsMode,
@@ -67,10 +67,10 @@ void setResizeFlags();
 void resizeScreen(bool reload_main_window);
 void setWindowsDimensions();
 
-bool askYesNoQuestion(const boost::format &question, void (*callback)());
-inline bool askYesNoQuestion(const std::string &question, void (*callback)())
+void confirmAction(const boost::format &description);
+inline void confirmAction(const std::string &description)
 {
-	return askYesNoQuestion(boost::format(question), callback);
+	confirmAction(boost::format(description));
 }
 
 bool isMPDMusicDirSet();
@@ -122,7 +122,11 @@ protected:
 
 struct MouseEvent : public BaseAction
 {
-	MouseEvent() : BaseAction(Type::MouseEvent, "mouse_event") { }
+	MouseEvent() : BaseAction(Type::MouseEvent, "mouse_event")
+	{
+		m_old_mouse_event.bstate = 0;
+		m_mouse_event.bstate = 0;
+	}
 	
 protected:
 	virtual bool canBeRun() const;
@@ -802,15 +806,6 @@ protected:
 	virtual void run();
 };
 
-struct ApplyFilter : public BaseAction
-{
-	ApplyFilter() : BaseAction(Type::ApplyFilter, "apply_filter") { }
-	
-protected:
-	virtual bool canBeRun() const;
-	virtual void run();
-};
-
 struct Find : public BaseAction
 {
 	Find() : BaseAction(Type::Find, "find") { }
@@ -964,16 +959,6 @@ struct SetVisualizerSampleMultiplier : public BaseAction
 	SetVisualizerSampleMultiplier()
 	: BaseAction(Type::SetVisualizerSampleMultiplier, "set_visualizer_sample_multiplier") { }
 
-protected:
-	virtual bool canBeRun() const;
-	virtual void run();
-};
-
-struct FilterPlaylistOnPriorities : public BaseAction
-{
-	FilterPlaylistOnPriorities()
-	: BaseAction(Type::FilterPlaylistOnPriorities, "filter_playlist_on_priorities") { }
-	
 protected:
 	virtual bool canBeRun() const;
 	virtual void run();

@@ -22,17 +22,18 @@
 #define NCMPCPP_DISPLAY_H
 
 #include "interfaces.h"
+#include "format.h"
 #include "menu.h"
 #include "mutable_song.h"
 #include "search_engine.h"
 
-namespace Display {//
+namespace Display {
 
 std::string Columns(size_t);
 
 void SongsInColumns(NC::Menu<MPD::Song> &menu, const ProxySongList &pl);
 
-void Songs(NC::Menu<MPD::Song> &menu, const ProxySongList &pl, const std::string &format);
+void Songs(NC::Menu<MPD::Song> &menu, const ProxySongList &pl, const Format::AST<char> &ast);
 
 void Tags(NC::Menu<MPD::MutableSong> &menu);
 
